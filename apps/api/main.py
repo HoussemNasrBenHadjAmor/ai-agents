@@ -16,6 +16,10 @@ from fastapi.responses import (
 
 from pydantic import BaseModel
 
+# ============================================================
+# AGENT IMPORT PATH
+# ============================================================
+
 AGENT_PATH = Path(__file__).resolve().parents[1] / "agent"
 
 sys.path.insert(
@@ -24,14 +28,24 @@ sys.path.insert(
 )
 
 
+# ============================================================
+# AGENT IMPORTS
+# ============================================================
+
 from agents.database_agent import DatabaseAgent
 from agents.docker_agent import DockerAgent
 from agents.network_agent import NetworkAgent
 from agents.orchestrator import Orchestrator
 
 from config import (
-    AI_INPUT_COST_PER_1M,
-    AI_OUTPUT_COST_PER_1M,
+    AI_MODEL,
+    AI_PRICING_CURRENCY,
+    AI_CACHE_HIT_COST_PER_1M_OFF_PEAK,
+    AI_CACHE_MISS_COST_PER_1M_OFF_PEAK,
+    AI_OUTPUT_COST_PER_1M_OFF_PEAK,
+    AI_CACHE_HIT_COST_PER_1M_PEAK,
+    AI_CACHE_MISS_COST_PER_1M_PEAK,
+    AI_OUTPUT_COST_PER_1M_PEAK,
 )
 
 from llm import (
@@ -49,9 +63,13 @@ from history import (
     save_event,
 )
 
+# ============================================================
+# FASTAPI
+# ============================================================
+
 app = FastAPI(
     title="AI DevOps Agent API",
-    version="0.3.0",
+    version="0.4.0",
 )
 
 
@@ -63,6 +81,136 @@ orchestrator = None
 
 class InvestigationRequest(BaseModel):
     message: str
+
+
+# ============================================================
+# METRIC BUILDER
+# ============================================================
+
+
+def build_metrics(
+    *,
+    usage,
+    duration_seconds: float,
+    agents_used,
+    tool_calls: int,
+) -> dict:
+
+    if usage is None:
+
+        return {
+            "duration_seconds": round(
+                duration_seconds,
+                2,
+            ),
+            "agents_used": sorted(agents_used),
+            "tool_calls": tool_calls,
+            "llm_calls": 0,
+            "input_tokens": 0,
+            "input_cache_hit_tokens": 0,
+            "input_cache_miss_tokens": 0,
+            "cache_hit_ratio_percent": 0.0,
+            "output_tokens": 0,
+            "reasoning_tokens": 0,
+            "total_tokens": 0,
+            "peak_llm_calls": 0,
+            "off_peak_llm_calls": 0,
+            "pricing_period": "unknown",
+            "estimated_cost_usd": 0.0,
+            "pricing_currency": AI_PRICING_CURRENCY,
+            "pricing_model": AI_MODEL,
+        }
+
+    input_tokens = usage.input_tokens
+
+    cache_hit_tokens = usage.cache_hit_tokens
+
+    cache_miss_tokens = usage.cache_miss_tokens
+
+    if input_tokens > 0:
+
+        cache_hit_ratio = cache_hit_tokens / input_tokens * 100
+
+    else:
+
+        cache_hit_ratio = 0.0
+
+    periods = usage.pricing_periods_seen
+
+    if periods == {"peak"}:
+
+        pricing_period = "peak"
+
+    elif periods == {"off_peak"}:
+
+        pricing_period = "off_peak"
+
+    elif len(periods) > 1:
+
+        pricing_period = "mixed"
+
+    else:
+
+        pricing_period = "unknown"
+
+    return {
+        # Execution
+        "duration_seconds": round(
+            duration_seconds,
+            2,
+        ),
+        "agents_used": sorted(agents_used),
+        "tool_calls": tool_calls,
+        "llm_calls": usage.llm_calls,
+        # Input tokens
+        "input_tokens": input_tokens,
+        "input_cache_hit_tokens": cache_hit_tokens,
+        "input_cache_miss_tokens": cache_miss_tokens,
+        "cache_hit_ratio_percent": round(
+            cache_hit_ratio,
+            2,
+        ),
+        # Output
+        "output_tokens": usage.output_tokens,
+        "reasoning_tokens": usage.reasoning_tokens,
+        "total_tokens": usage.total_tokens,
+        # Pricing periods
+        "peak_llm_calls": usage.peak_llm_calls,
+        "off_peak_llm_calls": usage.off_peak_llm_calls,
+        "pricing_period": pricing_period,
+        # Detailed pricing-period tokens
+        "peak_cache_hit_tokens": usage.peak_cache_hit_tokens,
+        "peak_cache_miss_tokens": usage.peak_cache_miss_tokens,
+        "peak_output_tokens": usage.peak_output_tokens,
+        "off_peak_cache_hit_tokens": usage.off_peak_cache_hit_tokens,
+        "off_peak_cache_miss_tokens": usage.off_peak_cache_miss_tokens,
+        "off_peak_output_tokens": usage.off_peak_output_tokens,
+        # Cost
+        "estimated_cost_usd": round(
+            usage.estimated_cost_usd,
+            8,
+        ),
+        "pricing_currency": AI_PRICING_CURRENCY,
+        "pricing_model": AI_MODEL,
+        # Rates used
+        "pricing_rates_per_1m": {
+            "off_peak": {
+                "cache_hit": AI_CACHE_HIT_COST_PER_1M_OFF_PEAK,
+                "cache_miss": AI_CACHE_MISS_COST_PER_1M_OFF_PEAK,
+                "output": AI_OUTPUT_COST_PER_1M_OFF_PEAK,
+            },
+            "peak": {
+                "cache_hit": AI_CACHE_HIT_COST_PER_1M_PEAK,
+                "cache_miss": AI_CACHE_MISS_COST_PER_1M_PEAK,
+                "output": AI_OUTPUT_COST_PER_1M_PEAK,
+            },
+        },
+    }
+
+
+# ============================================================
+# STARTUP
+# ============================================================
 
 
 @app.on_event("startup")
@@ -102,6 +250,11 @@ async def startup():
     print("[API] Agents ready.")
 
 
+# ============================================================
+# SHUTDOWN
+# ============================================================
+
+
 @app.on_event("shutdown")
 async def shutdown():
 
@@ -117,6 +270,11 @@ async def shutdown():
         await docker_agent.close()
 
 
+# ============================================================
+# HEALTH
+# ============================================================
+
+
 @app.get("/health")
 async def health():
 
@@ -126,47 +284,60 @@ async def health():
     }
 
 
+# ============================================================
+# NON-STREAM INVESTIGATION
+# ============================================================
+
+
 @app.post("/investigate")
 async def investigate(
     request: InvestigationRequest,
 ):
 
+    started_at = time.perf_counter()
+
+    tool_calls = 0
+    agents_used = set()
+
+    async def metrics_callback(
+        event: dict,
+    ):
+
+        nonlocal tool_calls
+
+        if event.get("type") == "tool_started":
+            tool_calls += 1
+
+        if event.get("type") == "specialist_selected":
+
+            agent = event.get("agent")
+
+            if agent:
+                agents_used.add(agent)
+
     usage_token = start_usage_tracking()
 
-    started_at = time.perf_counter()
+    usage_stopped = False
 
     try:
 
-        diagnosis = await orchestrator.run(request.message)
+        diagnosis = await orchestrator.run(
+            request.message,
+            event_callback=metrics_callback,
+        )
 
         usage = stop_usage_tracking(usage_token)
 
+        usage_stopped = True
+
         duration_seconds = time.perf_counter() - started_at
 
-        input_tokens = usage.input_tokens if usage else 0
-
-        output_tokens = usage.output_tokens if usage else 0
-
-        input_cost = input_tokens / 1_000_000 * AI_INPUT_COST_PER_1M
-
-        output_cost = output_tokens / 1_000_000 * AI_OUTPUT_COST_PER_1M
-
-        metrics = {
-            "duration_seconds": round(
-                duration_seconds,
-                2,
-            ),
-            "agents_used": [],
-            "tool_calls": 0,
-            "llm_calls": (usage.llm_calls if usage else 0),
-            "input_tokens": input_tokens,
-            "output_tokens": output_tokens,
-            "total_tokens": (usage.total_tokens if usage else 0),
-            "estimated_cost_usd": round(
-                input_cost + output_cost,
-                6,
-            ),
-        }
+        metrics = build_metrics(
+            usage=usage,
+            duration_seconds=duration_seconds,
+            agents_used=agents_used,
+            tool_calls=tool_calls,
+        )
 
         return {
             "message": request.message,
@@ -178,14 +349,21 @@ async def investigate(
             ),
         }
 
-    except Exception:
+    finally:
 
-        try:
-            stop_usage_tracking(usage_token)
-        except Exception:
-            pass
+        if not usage_stopped:
 
-        raise
+            try:
+
+                stop_usage_tracking(usage_token)
+
+            except Exception:
+                pass
+
+
+# ============================================================
+# STREAM INVESTIGATION
+# ============================================================
 
 
 @app.post("/investigate/stream")
@@ -217,6 +395,7 @@ async def investigate_stream(
         sequence += 1
 
         if event.get("type") == "tool_started":
+
             tool_calls += 1
 
         if event.get("type") == "specialist_selected":
@@ -224,6 +403,7 @@ async def investigate_stream(
             agent = event.get("agent")
 
             if agent:
+
                 agents_used.add(agent)
 
         await save_event(
@@ -253,34 +433,12 @@ async def investigate_stream(
 
             duration_seconds = time.perf_counter() - started_at
 
-            input_tokens = usage.input_tokens if usage else 0
-
-            output_tokens = usage.output_tokens if usage else 0
-
-            total_tokens = (
-                usage.total_tokens if usage else (input_tokens + output_tokens)
+            metrics = build_metrics(
+                usage=usage,
+                duration_seconds=duration_seconds,
+                agents_used=agents_used,
+                tool_calls=tool_calls,
             )
-
-            input_cost = input_tokens / 1_000_000 * AI_INPUT_COST_PER_1M
-
-            output_cost = output_tokens / 1_000_000 * AI_OUTPUT_COST_PER_1M
-
-            metrics = {
-                "duration_seconds": round(
-                    duration_seconds,
-                    2,
-                ),
-                "agents_used": sorted(agents_used),
-                "tool_calls": tool_calls,
-                "llm_calls": (usage.llm_calls if usage else 0),
-                "input_tokens": input_tokens,
-                "output_tokens": output_tokens,
-                "total_tokens": total_tokens,
-                "estimated_cost_usd": round(
-                    input_cost + output_cost,
-                    6,
-                ),
-            }
 
             await complete_investigation(
                 investigation_id,
@@ -306,6 +464,7 @@ async def investigate_stream(
             if not usage_stopped:
 
                 try:
+
                     stop_usage_tracking(usage_token)
 
                 except Exception:
@@ -359,6 +518,7 @@ async def investigate_stream(
                 yield ("data: " + json.dumps(event) + "\n\n")
 
                 if event.get("type") == "done":
+
                     break
 
         finally:
@@ -374,6 +534,11 @@ async def investigate_stream(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+# ============================================================
+# HISTORY
+# ============================================================
 
 
 @app.get("/investigations")
