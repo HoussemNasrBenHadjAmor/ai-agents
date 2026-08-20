@@ -1,22 +1,18 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
+import { useState } from "react";
 import { DashboardShell, Header } from "@/components/DashboardShell";
-import { DiagnosisSummary } from "@/components/DiagnosisSummary";
-import { ErrorState, LoadingState } from "@/components/EmptyState";
 import { InvestigationForm } from "@/components/InvestigationForm";
-import { InvestigationHistory } from "@/components/InvestigationHistory";
-import { InvestigationMetrics } from "@/components/InvestigationMetrics";
-import { InvestigationProgress } from "@/components/InvestigationProgress";
+import { InvestigationDetail } from "@/components/InvestigationDetail";
 import type {
   Diagnosis,
-  InvestigationDetail,
   InvestigationEvent,
   InvestigationMetrics as Metrics,
-  InvestigationSummary as Summary,
 } from "@/types/investigation";
 
 export default function Home() {
+  const router = useRouter();
   const [message, setMessage] = useState("");
   const [result, setResult] = useState("");
   const [diagnosis, setDiagnosis] = useState<Diagnosis | null>(null);
@@ -24,69 +20,7 @@ export default function Home() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [events, setEvents] = useState<InvestigationEvent[]>([]);
-  const [history, setHistory] = useState<Summary[]>([]);
-  const [historyLoading, setHistoryLoading] = useState(false);
-  const [selectedInvestigationId, setSelectedInvestigationId] = useState<
-    string | null
-  >(null);
   const [selectedPrompt, setSelectedPrompt] = useState("");
-
-  useEffect(() => {
-    loadHistory();
-  }, []);
-
-  async function loadHistory() {
-    setHistoryLoading(true);
-
-    try {
-      const response = await fetch("/api/investigations", {
-        cache: "no-store",
-      });
-
-      if (!response.ok) {
-        throw new Error(`History request failed: ${response.status}`);
-      }
-
-      const data = await response.json();
-      setHistory(Array.isArray(data) ? data : []);
-    } catch (err) {
-      console.error("Failed to load history:", err);
-    } finally {
-      setHistoryLoading(false);
-    }
-  }
-
-  async function loadInvestigation(investigationId: string) {
-    setLoading(true);
-    setError("");
-
-    try {
-      const response = await fetch(`/api/investigations/${investigationId}`, {
-        cache: "no-store",
-      });
-
-      if (!response.ok) {
-        throw new Error(`Investigation request failed: ${response.status}`);
-      }
-
-      const data: InvestigationDetail = await response.json();
-
-      setSelectedInvestigationId(data.id);
-      setSelectedPrompt(data.message);
-      setMessage(data.message);
-      setEvents(data.events ?? []);
-      setResult(data.result ?? "");
-      setDiagnosis(data.diagnosis ?? null);
-      setMetrics(data.metrics ?? null);
-      setError(data.error ?? "");
-    } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Unable to load investigation",
-      );
-    } finally {
-      setLoading(false);
-    }
-  }
 
   async function investigate() {
     if (!message.trim()) {
@@ -99,10 +33,11 @@ export default function Home() {
     setMetrics(null);
     setError("");
     setEvents([]);
-    setSelectedInvestigationId(null);
     setSelectedPrompt(message);
 
     try {
+      let createdInvestigationId: string | null = null;
+
       const response = await fetch("/api/investigate", {
         method: "POST",
         headers: {
@@ -145,7 +80,7 @@ export default function Home() {
 
           if (event.type === "investigation_created") {
             if (event.investigation_id) {
-              setSelectedInvestigationId(event.investigation_id);
+              createdInvestigationId = event.investigation_id;
             }
             continue;
           }
@@ -168,7 +103,11 @@ export default function Home() {
         }
       }
 
-      await loadHistory();
+      window.dispatchEvent(new Event("investigation-history-refresh"));
+
+      if (createdInvestigationId) {
+        router.push(`/investigation/${createdInvestigationId}`);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Investigation failed");
     } finally {
@@ -176,29 +115,13 @@ export default function Home() {
     }
   }
 
-  const sidebar = useMemo(
-    () => (
-      <InvestigationHistory
-        history={history}
-        loading={historyLoading}
-        selectedInvestigationId={selectedInvestigationId}
-        onSelect={loadInvestigation}
-      />
-    ),
-    [history, historyLoading, selectedInvestigationId],
-  );
-
-  const activeAgent = [...events]
-    .reverse()
-    .find((event) => event.agent && event.type !== "agent_completed")?.agent;
-
-  const completedTools = events.filter(
-    (event) => event.type === "tool_completed",
-  ).length;
-
   return (
-    <DashboardShell sidebar={sidebar}>
-      <Header isRunning={loading} />
+    <DashboardShell>
+      <Header
+        isRunning={loading}
+        title="AI DevOps Agent"
+        subtitle="What do you want to investigate?"
+      />
 
       <div className="dashboard-content">
         <InvestigationForm
@@ -208,33 +131,18 @@ export default function Home() {
           onSubmit={investigate}
         />
 
-        {(selectedPrompt || activeAgent || completedTools > 0) && (
-          <section className="status-strip" aria-label="Current investigation">
-            <div>
-              <span>Question</span>
-              <strong>{selectedPrompt || "No investigation selected"}</strong>
-            </div>
-            <div>
-              <span>Active agent</span>
-              <strong>{activeAgent ?? (loading ? "Orchestrator" : "Idle")}</strong>
-            </div>
-            <div>
-              <span>Tools completed</span>
-              <strong>{completedTools}</strong>
-            </div>
-          </section>
+        {(selectedPrompt || loading || result || diagnosis || events.length > 0) && (
+          <InvestigationDetail
+            prompt={selectedPrompt}
+            events={events}
+            metrics={metrics}
+            diagnosis={diagnosis}
+            result={result}
+            error={error}
+            loading={loading}
+          />
         )}
-
-        {error && <ErrorState message={error} />}
-        {loading && events.length === 0 && (
-          <LoadingState label="Opening investigation stream" />
-        )}
-
-        <DiagnosisSummary diagnosis={diagnosis} result={result} />
-        <InvestigationProgress events={events} loading={loading} />
-        <InvestigationMetrics metrics={metrics} />
       </div>
     </DashboardShell>
   );
 }
-

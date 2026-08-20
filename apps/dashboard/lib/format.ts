@@ -22,10 +22,23 @@ export function formatDuration(seconds?: number | null) {
     return "Unknown";
   }
 
-  return `${new Intl.NumberFormat(undefined, {
+  const formatSeconds = (value: number) => `${new Intl.NumberFormat(undefined, {
     maximumFractionDigits: 2,
-    minimumFractionDigits: Number.isInteger(seconds) ? 0 : 2,
-  }).format(seconds)}s`;
+  }).format(Number(value.toFixed(2)))}s`;
+
+  if (seconds < 60) {
+    return formatSeconds(seconds);
+  }
+
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const remainingSeconds = seconds % 60;
+
+  if (hours > 0) {
+    return `${hours}h ${minutes}m ${formatSeconds(remainingSeconds)}`;
+  }
+
+  return `${minutes}m ${formatSeconds(remainingSeconds)}`;
 }
 
 export function formatCost(value?: number) {

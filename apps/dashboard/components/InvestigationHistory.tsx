@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { formatDate, formatDuration } from "@/lib/format";
 import type { InvestigationSummary } from "@/types/investigation";
 import { EmptyState, LoadingState } from "@/components/EmptyState";
@@ -9,15 +10,15 @@ export function InvestigationHistory({
   history,
   loading,
   selectedInvestigationId,
-  onSelect,
+  onNavigate,
 }: {
   history: InvestigationSummary[];
   loading: boolean;
   selectedInvestigationId: string | null;
-  onSelect: (id: string) => void;
+  onNavigate?: () => void;
 }) {
   return (
-    <div className="history-panel">
+    <nav className="history-panel" aria-label="Previous investigations">
       <div className="history-header">
         <div>
           <p className="eyebrow">History</p>
@@ -41,32 +42,34 @@ export function InvestigationHistory({
             key={item.id}
             item={item}
             selected={item.id === selectedInvestigationId}
-            onSelect={() => onSelect(item.id)}
+            onNavigate={onNavigate}
           />
         ))}
       </div>
-    </div>
+    </nav>
   );
 }
 
 function HistoryItem({
   item,
   selected,
-  onSelect,
+  onNavigate,
 }: {
   item: InvestigationSummary;
   selected: boolean;
-  onSelect: () => void;
+  onNavigate?: () => void;
 }) {
   const headline = item.headline || item.message;
   const duration = item.metrics?.duration_seconds;
+  const durationLabel =
+    typeof duration === "number" ? formatDuration(duration) : "No duration yet";
 
   return (
-    <button
-      type="button"
+    <Link
+      href={`/investigation/${item.id}`}
       className={`history-item ${selected ? "is-selected" : ""}`}
-      onClick={onSelect}
-      aria-current={selected ? "true" : undefined}
+      onClick={onNavigate}
+      aria-current={selected ? "page" : undefined}
     >
       <span className="history-item-topline">
         <StatusBadge status={item.status} />
@@ -75,10 +78,9 @@ function HistoryItem({
       <span className="history-title">{headline}</span>
       <span className="history-preview">{item.message}</span>
       <span className="history-meta">
-        <span>{duration ? formatDuration(duration) : "No duration yet"}</span>
+        <span>{durationLabel}</span>
         <span>{item.completed_at ? "Finished" : "Open"}</span>
       </span>
-    </button>
+    </Link>
   );
 }
-
