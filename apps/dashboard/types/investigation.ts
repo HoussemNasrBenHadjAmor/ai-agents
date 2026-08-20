@@ -25,14 +25,40 @@ export type Diagnosis = {
 };
 
 export type InvestigationMetrics = {
-  duration_seconds: number;
-  agents_used: string[];
-  tool_calls: number;
-  llm_calls: number;
-  input_tokens: number;
-  output_tokens: number;
-  total_tokens: number;
+  duration_seconds?: number | null;
+  agents_used?: string[] | null;
+  tool_calls?: number | null;
+  llm_calls?: number | null;
+  input_tokens?: number | null;
+  input_cache_hit_tokens?: number | null;
+  input_cache_miss_tokens?: number | null;
+  cache_hit_ratio_percent?: number | null;
+  output_tokens?: number | null;
+  reasoning_tokens?: number | null;
+  total_tokens?: number | null;
+  peak_llm_calls?: number | null;
+  off_peak_llm_calls?: number | null;
+  pricing_period?: "peak" | "off_peak" | "mixed" | "unknown" | string | null;
+  peak_cache_hit_tokens?: number | null;
+  peak_cache_miss_tokens?: number | null;
+  peak_output_tokens?: number | null;
+  off_peak_cache_hit_tokens?: number | null;
+  off_peak_cache_miss_tokens?: number | null;
+  off_peak_output_tokens?: number | null;
   estimated_cost_usd?: number;
+  pricing_currency?: string | null;
+  pricing_model?: string | null;
+  pricing_rates_per_1m?: {
+    off_peak?: PricingRateSet | null;
+    peak?: PricingRateSet | null;
+    [period: string]: PricingRateSet | null | undefined;
+  } | null;
+};
+
+export type PricingRateSet = {
+  cache_hit?: number | null;
+  cache_miss?: number | null;
+  output?: number | null;
 };
 
 export type InvestigationEvent = {

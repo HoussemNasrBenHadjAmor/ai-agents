@@ -49,6 +49,57 @@ export function formatCost(value?: number) {
   return `$${value.toFixed(6)}`;
 }
 
+export function formatCurrencyCost(value?: number | null, currency = "USD") {
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    return "Unavailable";
+  }
+
+  return `${formatCost(value)} ${currency}`;
+}
+
+export function formatRatePerMillion(value?: number | null, currency = "USD") {
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    return "Unavailable";
+  }
+
+  return `$${new Intl.NumberFormat(undefined, {
+    maximumFractionDigits: 6,
+  }).format(value)} ${currency} / 1M`;
+}
+
+export function formatNumber(value?: number | null) {
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    return "Unavailable";
+  }
+
+  return value.toLocaleString();
+}
+
+export function formatPercent(value?: number | null) {
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    return "Unavailable";
+  }
+
+  return `${new Intl.NumberFormat(undefined, {
+    maximumFractionDigits: 2,
+  }).format(Number(value.toFixed(2)))}%`;
+}
+
+export function formatPricingPeriod(value?: string | null) {
+  switch (value) {
+    case "peak":
+      return "Peak";
+    case "off_peak":
+      return "Off-Peak";
+    case "mixed":
+      return "Mixed";
+    case "unknown":
+      return "Unknown";
+    default:
+      return value ? formatAgentName(value) : "Unknown";
+  }
+}
+
 export function formatAgentName(value: string) {
   return value
     .split(/([\s_-]+)/)
