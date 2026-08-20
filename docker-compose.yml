@@ -34,6 +34,32 @@ services:
     networks:
       - benca-network
 
+history-db:
+  image: postgres:16-alpine
+
+  container_name: ai-agents-history-db
+  restart: unless-stopped
+
+  environment:
+    POSTGRES_DB: ai_agents_history
+    POSTGRES_USER: ai_agents_app
+    POSTGRES_PASSWORD: ${HISTORY_DB_PASSWORD}
+
+  ports:
+    - "127.0.0.1:55434:5432"
+
+  volumes:
+    - ai-agents-history-data:/var/lib/postgresql/data
+
+  healthcheck:
+    test: ["CMD-SHELL", "pg_isready -U ai_agents_app -d ai_agents_history"]
+    interval: 5s
+    timeout: 5s
+    retries: 10
+
 networks:
   benca-network:
     external: true
+
+volumes:
+  ai-agents-history-data:
