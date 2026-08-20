@@ -1,209 +1,333 @@
-# AI DevOps Agent Platform
+# AI DevOps Agent
 
-A learning project for building a **read-only, multi-agent AI DevOps
-assistant** that can investigate Docker, PostgreSQL, and network
-problems on a Linux VPS.
+A read-only multi-agent AI system for investigating infrastructure problems across Docker, PostgreSQL, and networking.
 
-The long-term goal is to provide a simple web dashboard where a user can
-ask questions such as:
+The project uses specialist AI agents, MCP servers, a central orchestrator, FastAPI, Next.js, PostgreSQL, and a configurable LLM provider.
 
-> Why is my application unhealthy?
-
-The system will route the request to specialized AI agents, collect real
-infrastructure evidence through constrained tools, and return a combined
-diagnosis **without modifying the infrastructure**.
+The main goal of this project is to learn how real AI agent systems work by building one from scratch.
 
 ---
 
-## 1. Project Goal
+# 1. Project Goal
 
-This project is being built from scratch to learn how AI agents work in
-a real application.
+The AI DevOps Agent allows a user to ask infrastructure questions such as:
 
-Instead of building a chatbot that only answers from model knowledge,
-the project gives AI agents access to **tools** that let them inspect a
-real server.
+```text
+List any Docker containers that are currently restarting or unhealthy.
+```
 
-Core principle:
+or:
 
-> **The AI can reason about the environment, but it should not be able
-> to change it.**
+```text
+Investigate why my application is unavailable.
+```
 
-The agents are therefore designed to be read-only.
+The system can then:
+
+1. Understand the request.
+2. Select the appropriate specialist agent.
+3. Use real infrastructure tools through MCP.
+4. Collect evidence.
+5. Investigate further when necessary.
+6. Produce a structured diagnosis.
+7. Stream investigation progress to the dashboard.
+8. Save the investigation and events to history.
+
+The system is intentionally:
+
+> READ-ONLY
+
+Agents can inspect infrastructure but must not automatically restart, stop, delete, modify, or reconfigure infrastructure.
 
 ---
 
-## 2. Target Architecture
+# 2. Architecture
 
 ```text
                          Internet
                             │
                             ▼
-                         Nginx
+                   Nginx Proxy Manager
                             │
                             ▼
-                      Next.js UI
+                     Next.js Dashboard
                             │
+                            │ HTTP / SSE
                             ▼
                        FastAPI API
                             │
                             ▼
-                       Orchestrator
+                    Agent Orchestrator
                             │
              ┌──────────────┼──────────────┐
              │              │              │
              ▼              ▼              ▼
-        Docker Agent   Database Agent   Network Agent
+       Docker Agent    Database Agent   Network Agent
              │              │              │
              ▼              ▼              ▼
-        Docker MCP       DBHub MCP      Safe network
-             │              │             tools
-             ▼              ▼              │
-          Docker         PostgreSQL         ├── DNS
-                                            ├── HTTP/HTTPS
-                                            ├── TCP
-                                            └── host info
-```
+        Docker MCP      Database MCP    Network Tools
+             │              │              │
+             ▼              ▼              ▼
+      Docker Engine     PostgreSQL      HTTP / DNS /
+      Containers        Databases       TCP / Host
+      Networks
+      Volumes
+      Compose
 
-The dashboard and reverse-proxy layer are still to be completed.
+                            │
+                            ▼
+                     Structured Diagnosis
+                            │
+                            ▼
+                    Investigation History
+                            │
+                            ▼
+                  PostgreSQL History DB
+```
 
 ---
 
-## 3. AI Provider
+# 3. Current Technology Stack
 
-The project currently uses **DeepSeek** because it is inexpensive for
-experimentation.
+## AI / Agent Layer
 
-The provider configuration is not intended to be hard-coded.
-Model/provider settings are stored in `.env` so the application can
-later switch to another OpenAI-compatible provider with minimal code
-changes.
+- Python 3.12
+- DeepSeek
+- OpenAI-compatible API client
+- MCP — Model Context Protocol
+- Custom agent orchestration
+- Tool calling
+- Structured JSON diagnosis
+
+The LLM provider is configurable through `.env`.
 
 Example:
 
 ```env
-AI_PROVIDER=deepseek
-AI_BASE_URL=https://api.deepseek.com
-AI_MODEL=deepseek-v4-flash
-AI_API_KEY=...
-
-AGENT_MAX_ITERATIONS=2
-ORCHESTRATOR_MAX_ITERATIONS=2
+LLM_PROVIDER=deepseek
+LLM_MODEL=deepseek-v4-flash
+LLM_BASE_URL=https://api.deepseek.com
+LLM_API_KEY=YOUR_API_KEY
 ```
 
-The project uses an OpenAI-compatible Python client to communicate with
-the configured model.
+The provider/model configuration is not hard-coded into the agents.
 
----
-
-## 4. What Is an Agent in This Project?
-
-An agent is not simply the LLM.
-
-Conceptually:
-
-```text
-Agent
- │
- ├── LLM
- ├── instructions
- ├── tools
- ├── tool-selection loop
- └── collected evidence
-```
-
-For example, the Docker Agent can reason:
-
-```text
-User asks about server health
-        │
-        ▼
-container_list
-        │
-        ▼
-Find restarting container
-        │
-        ▼
-container_logs
-        │
-        ▼
-Inspect evidence
-        │
-        ▼
-Explain likely root cause
-```
-
-The LLM does not automatically have Docker, database, or shell access.
-It can only use capabilities explicitly exposed to it.
-
----
-
-## 5. Safety Model
-
-Safety is a central design requirement.
-
-The current project is intended to be **diagnostic only**.
-
-Agents must not:
-
-- start containers
-- stop containers
-- restart containers
-- delete containers
-- execute arbitrary commands inside containers
-- modify Docker networks
-- modify Docker volumes
-- modify database records
-- change firewall rules
-- change routes
-- modify DNS configuration
-- make infrastructure changes automatically
-
-The preferred security principle is:
-
-> Do not merely tell the model not to perform an action --- do not
-> expose the capability in the first place.
-
----
-
-# 6. Docker Agent
-
-## Status
-
-**Implemented and working.**
-
-The Docker Agent uses a Docker MCP server rather than maintaining a
-large collection of custom Docker functions.
-
-Architecture:
+This allows the project to later switch between providers such as:
 
 ```text
 DeepSeek
-   │
-   ▼
-Docker Agent
-   │
-   ▼
-Python MCP Client
-   │
-   ▼
-Docker MCP Server
-   │
-   ▼
-Docker daemon
+GPT
+Claude
+other compatible providers
 ```
 
-The MCP server is started with read-only mode enabled:
+without rewriting the agent architecture.
+
+---
+
+# 4. Application Layer
+
+## Backend
+
+FastAPI provides:
+
+- agent initialization
+- orchestration
+- investigation requests
+- Server-Sent Events streaming
+- investigation history
+- investigation detail retrieval
+- structured diagnosis delivery
+
+## Frontend
+
+Next.js provides the web dashboard.
+
+The dashboard currently supports:
+
+- investigation prompt input
+- real-time investigation progress
+- specialist selection visibility
+- tool execution visibility
+- structured diagnosis
+- severity badges
+- issue tables
+- evidence display
+- likely root-cause display
+- recommended next investigation steps
+- investigation history
+- loading previous investigations
+
+---
+
+# 5. Docker Deployment
+
+The project runs in Docker.
+
+The development philosophy is:
+
+> Application services should run in containers rather than requiring manually activated Python virtual environments.
+
+Main containers include:
 
 ```text
-DOCKER_MCP_SERVER_READONLY=1
+ai-agents-api
+ai-agents-dashboard
+ai-agents-history-db
 ```
 
-The MCP server originally advertised 76 read-only tools. The application
-applies an additional Python allowlist and currently exposes only about
-20 diagnostic tools to the model.
+The API container has access to:
 
-Examples include:
+```text
+/var/run/docker.sock
+```
+
+which allows the Docker MCP server to inspect the host Docker environment.
+
+The Docker tools exposed to the LLM are restricted to approved read-only diagnostic operations.
+
+---
+
+# 6. Networking
+
+The dashboard is connected to:
+
+```text
+benca-network
+```
+
+because the existing Nginx Proxy Manager also uses this Docker network.
+
+Example:
+
+```yaml
+dashboard:
+  networks:
+    - benca-network
+
+networks:
+  benca-network:
+    external: true
+```
+
+The dashboard is exposed locally on:
+
+```text
+127.0.0.1:3005
+```
+
+Nginx Proxy Manager can proxy traffic to the dashboard through the shared Docker network.
+
+The API currently uses host networking because it needs access to several host-level services and MCP resources.
+
+---
+
+# 7. Agent Architecture
+
+The project currently contains four important agent components.
+
+```text
+Agent Orchestrator
+        │
+        ├── Docker Agent
+        │
+        ├── Database Agent
+        │
+        └── Network Agent
+```
+
+---
+
+# 8. Agent Orchestrator
+
+The orchestrator is the central decision-making agent.
+
+It does not directly inspect infrastructure.
+
+Instead, it determines which specialist should investigate the user's request.
+
+Example:
+
+```text
+User:
+Why is my container restarting?
+```
+
+The orchestrator determines:
+
+```text
+Docker problem
+      │
+      ▼
+Docker Agent
+```
+
+For:
+
+```text
+Are any PostgreSQL sessions blocked?
+```
+
+it routes to:
+
+```text
+Database Agent
+```
+
+For:
+
+```text
+Why can't the API domain be reached?
+```
+
+it can route to:
+
+```text
+Network Agent
+```
+
+For more complicated problems, multiple specialists may eventually collaborate.
+
+Example:
+
+```text
+User
+ │
+ ▼
+Orchestrator
+ │
+ ├── Docker Agent
+ │      │
+ │      └── API container appears healthy
+ │
+ ├── Database Agent
+ │      │
+ │      └── Database appears healthy
+ │
+ └── Network Agent
+        │
+        └── DNS points to wrong host
+```
+
+The orchestrator then combines the evidence into the final diagnosis.
+
+---
+
+# 9. Docker Agent
+
+The Docker Agent investigates the Docker environment.
+
+Instead of manually implementing every Docker command as a Python function, the project uses a Docker MCP server.
+
+The MCP server exposes Docker capabilities to the agent.
+
+During testing, the MCP server exposed approximately:
+
+```text
+76 Docker tools
+```
+
+Examples included:
 
 ```text
 container_list
@@ -211,6 +335,11 @@ container_inspect
 container_logs
 container_stats
 container_top
+
+compose_list
+compose_ps
+compose_logs
+compose_config
 
 network_list
 network_inspect
@@ -221,93 +350,121 @@ volume_inspect
 image_list
 image_inspect
 
-compose_list
-compose_ps
-compose_logs
-compose_config
-
 system_info
 system_df
 system_events
-system_version
 ```
 
-This reduces both risk and unnecessary tool-schema/token overhead.
+However, the AI is not given unrestricted access to all tools.
 
-### Real diagnostic test
+The application maintains an approved read-only tool list.
 
-The Docker Agent successfully inspected the VPS and found real issues.
+Approximately:
 
-Examples included:
+```text
+20 approved Docker tools
+```
 
-- `css-proxy` in a restart/crash loop
-- `ai-job-platform-worker-1` restarting
-- exited containers that needed classification as expected or
-  unexpected
+are currently exposed to the Docker Agent.
 
-For `css-proxy`, logs showed an nginx error involving:
+This provides an important safety boundary.
+
+---
+
+# 10. Docker Investigation Example
+
+The Docker Agent successfully detected real infrastructure problems.
+
+Example:
+
+```text
+css-proxy
+```
+
+was found continuously restarting.
+
+The agent inspected the logs and discovered:
 
 ```text
 host not found in upstream "cssportal_app:8080"
 ```
 
-The agent correctly reasoned that Docker networking/name resolution was
-involved and used Docker evidence to investigate further.
-
-No infrastructure was modified.
-
----
-
-# 7. MCP
-
-This project uses **Model Context Protocol (MCP)** to connect agents to
-external capabilities.
-
-Instead of manually implementing every possible Docker operation:
-
-```python
-list_containers()
-get_logs()
-inspect_container()
-get_stats()
-inspect_network()
-...
-```
-
-the MCP server advertises its available tools dynamically.
-
-Conceptually:
+The agent concluded that the likely cause was Docker hostname/network resolution between:
 
 ```text
-Agent
-  │
-  ▼
-list_tools()
-  │
-  ▼
-MCP Server
-  │
-  ├── container_list
-  ├── container_logs
-  ├── container_inspect
-  └── ...
+css-proxy
 ```
 
-The Python application converts MCP tool schemas into the
-OpenAI-compatible function/tool format understood by DeepSeek.
+and:
 
-This was one of the main learning goals of the project.
+```text
+cssportal_app
+```
+
+Another real problem detected was:
+
+```text
+ai-job-platform-worker-1
+```
+
+which was repeatedly restarting.
+
+The agent attempted further log investigation while respecting the read-only policy.
+
+This demonstrated the core agent loop:
+
+```text
+Observe
+   │
+   ▼
+Reason
+   │
+   ▼
+Choose Tool
+   │
+   ▼
+Collect Evidence
+   │
+   ▼
+Reason Again
+   │
+   ▼
+Diagnosis
+```
 
 ---
 
-# 8. PostgreSQL Lab Database
+# 11. Database Agent
 
-## Status
+The Database Agent uses DBHub as a PostgreSQL MCP server.
 
-**Implemented and working.**
+The agent currently has tools such as:
 
-A separate PostgreSQL database was intentionally created for learning
-and testing the Database Agent.
+```text
+execute_sql
+search_objects
+```
+
+This allows the AI to inspect:
+
+- schemas
+- tables
+- application data
+- PostgreSQL statistics
+- connections
+- locks
+- blocked sessions
+- database size
+- long-running queries
+- incidents
+
+without receiving administrative database privileges.
+
+---
+
+# 12. Database Lab
+
+A PostgreSQL lab database was created specifically for learning and testing the Database Agent.
 
 Database:
 
@@ -315,755 +472,1088 @@ Database:
 agent_lab
 ```
 
-This is **not currently the production database for the other
-applications on the VPS**.
-
-It exists so the Database Agent can safely practice real database
-investigation before being connected to important databases.
-
-Example tables include:
+Example tables:
 
 ```text
 services
 incidents
 ```
 
-Example service state:
-
-```text
-api        healthy
-dashboard  healthy
-worker     degraded
-redis      healthy
-```
-
-The database can therefore contain intentionally interesting diagnostic
-information for the agent to discover.
+These allow us to simulate application state and incidents without risking production data.
 
 ---
 
-# 9. PostgreSQL Read-Only User
+# 13. Read-Only Database User
 
-A dedicated PostgreSQL account was created:
+The Database Agent connects using:
 
 ```text
 agent_reader
 ```
 
-The AI does not connect as the database administrator.
+This account is intentionally restricted.
 
-The intended privilege model is:
+The agent should not connect as:
 
 ```text
-agent_admin
-    │
-    └── administrative privileges
-
-agent_reader
-    │
-    └── SELECT/read privileges only
+postgres
 ```
 
-This provides a database-level security boundary independent of the AI
-instructions.
+or another administrative account.
 
-## Password issue encountered
+This enforces database safety at the permission level rather than relying only on the AI prompt.
 
-During initialization, `agent_reader` was created, but PostgreSQL
-reported:
+---
+
+# 14. Database Password Issue We Solved
+
+During setup, PostgreSQL returned:
+
+```text
+FATAL: password authentication failed for user "agent_reader"
+```
+
+The PostgreSQL logs revealed the actual problem:
 
 ```text
 User "agent_reader" has no password assigned.
 ```
 
-Therefore authentication failed even though `AGENT_DB_READONLY_PASSWORD`
-existed in `.env`.
+The role existed:
 
-The existing role was fixed by explicitly assigning the configured
-password using `ALTER ROLE`.
-
-Afterward, authentication was tested again.
-
-The goal was also to verify:
-
-```sql
-SELECT ...
+```text
+agent_reader
 ```
 
-works, while write operations such as:
+but it did not have a password.
 
-```sql
-DELETE ...
+A password was assigned to the role and the `.env` configuration was updated to use the matching credential.
+
+After fixing the credentials, the Database MCP server successfully connected:
+
+```text
+Connecting to 1 database source(s)...
+
+lab:
+postgres://agent_reader@127.0.0.1:55433/agent_lab
 ```
 
-are rejected by PostgreSQL permissions.
+The important lesson was:
 
-This was an important lesson: application-level "read-only" instructions
-are not enough; the underlying database user should also be restricted.
+```text
+Role existence != valid authentication configuration
+```
 
 ---
 
-# 10. Database Agent
+# 15. Database Agent Test
 
-## Status
-
-**Implemented and working.**
-
-The Database Agent uses **DBHub MCP**.
-
-Current MCP tools:
+The Database Agent successfully inspected PostgreSQL and discovered:
 
 ```text
-execute_sql
-search_objects
+PostgreSQL 16.x
+Database: agent_lab
+User: agent_reader
+Schema: public
 ```
 
-DBHub is configured in read-only mode and connects using the restricted
-`agent_reader` PostgreSQL account.
-
-Architecture:
+It found:
 
 ```text
-DeepSeek
-   │
-   ▼
-Database Agent
-   │
-   ▼
-DBHub MCP
-   │
-   ├── search_objects
-   └── execute_sql
-          │
-          ▼
-     agent_reader
-          │
-          ▼
-      PostgreSQL
+services
+incidents
 ```
 
-An important design decision was to avoid writing dozens of functions
-such as:
+and inspected PostgreSQL statistics.
 
-```python
-get_database_size()
-get_active_connections()
-get_locks()
-get_incidents()
-get_long_queries()
-```
-
-Instead, the model receives a constrained read-only SQL tool and can
-generate appropriate PostgreSQL `SELECT` queries.
-
-### Successful diagnostic test
-
-The Database Agent successfully:
-
-- identified PostgreSQL version information
-- discovered schemas
-- discovered `services` and `incidents`
-- inspected database statistics
-- checked database size
-- checked connection counts
-- reasoned about cache statistics
-- identified evidence that still needed further investigation
-
-With only two investigation iterations configured, the agent also
-correctly explained which checks it had not yet completed rather than
-pretending they had been performed.
+The test demonstrated that the LLM could autonomously choose database queries through MCP instead of requiring us to manually code every SQL diagnostic operation.
 
 ---
 
-# 11. Network Agent
+# 16. Network Agent
 
-## Status
+The Network Agent handles networking investigations.
 
-**Implemented/planned as the third specialist in the current
-architecture.**
-
-The Network Agent is intentionally more constrained than a generic shell
-agent.
-
-Its tools are designed around:
+Its responsibilities include:
 
 ```text
-resolve_dns()
-check_tcp_port()
-check_http()
-get_host_network_info()
+DNS
+HTTP
+HTTPS
+TCP
+listening ports
+routes
+host networking
+connectivity
 ```
 
-This allows investigation of:
+The Network Agent remains read-only.
 
-- DNS resolution
-- HTTP/HTTPS reachability
-- TCP connectivity
-- listening ports
-- host addresses
-- routing information
-
-without exposing:
+It can investigate questions such as:
 
 ```text
-shell(command)
-run_command(command)
-exec(command)
+Can the server resolve api.example.com?
 ```
 
-The goal is to keep network diagnostics read-only and predictable.
+```text
+Is port 443 reachable?
+```
+
+```text
+What process is listening on port 8000?
+```
+
+```text
+Does this HTTP endpoint respond?
+```
 
 ---
 
-# 12. Orchestrator
+# 17. Agent Safety Model
 
-## Status
+Safety is one of the core architectural requirements.
 
-**Implemented as the multi-agent coordination layer.**
+The project uses multiple layers.
 
-The orchestrator sits above the specialist agents.
+## Layer 1 — System Prompts
 
-```text
-                     User
-                      │
-                      ▼
-                 Orchestrator
-                      │
-          ┌───────────┼───────────┐
-          ▼           ▼           ▼
-       Docker      Database     Network
-        Agent        Agent       Agent
-```
-
-The orchestrator does not directly inspect Docker or PostgreSQL.
-
-Instead, it receives high-level specialist tools such as:
+Agents are explicitly instructed:
 
 ```text
-docker_agent(task)
-database_agent(task)
-network_agent(task)
+Do not modify anything.
 ```
 
-This creates two levels of agent reasoning.
+## Layer 2 — Tool Allowlist
 
-Example:
+Only approved diagnostic tools are exposed.
+
+## Layer 3 — Database Permissions
+
+The database agent uses:
+
+```text
+agent_reader
+```
+
+instead of an administrative account.
+
+## Layer 4 — MCP Tool Restrictions
+
+Write-capable MCP operations are not exposed to the LLM.
+
+The intended architecture is therefore:
+
+```text
+AI reasoning
+     │
+     ▼
+Allowed tool?
+     │
+ ┌───┴───┐
+ │       │
+NO      YES
+ │       │
+BLOCK   Execute
+         │
+         ▼
+      Read-only
+```
+
+This is much safer than simply telling the model:
+
+```text
+please don't delete anything
+```
+
+while still giving it destructive tools.
+
+---
+
+# 18. Investigation Iterations
+
+Agents operate using bounded investigation loops.
+
+For example:
+
+```env
+MAX_ITERATIONS=2
+```
+
+Limiting iterations helps control:
+
+- token consumption
+- API costs
+- runaway investigations
+- excessive tool calls
+
+The trade-off is that complex investigations may stop before all evidence has been collected.
+
+This happened during our Database Agent testing when only two iterations were available.
+
+The architecture therefore allows iteration limits to be adjusted based on the desired balance between:
+
+```text
+cost
+vs
+investigation depth
+```
+
+---
+
+# 19. Real-Time Investigation Progress
+
+The API uses:
+
+```text
+Server-Sent Events (SSE)
+```
+
+to stream investigation progress to the dashboard.
+
+Instead of waiting with no feedback:
 
 ```text
 User
-"Why is my worker failing?"
-
-        │
-        ▼
-
-Orchestrator
-"Likely Docker-related."
-
-        │
-        ▼
-
-Docker Agent
-container_list
-container_logs
-container_inspect
-
-        │
-        ▼
-
-Orchestrator
-"Database may also be relevant."
-
-        │
-        ▼
-
-Database Agent
-execute_sql
-
-        │
-        ▼
-
-Orchestrator
-combines evidence
-
-        │
-        ▼
-
-Final diagnosis
+ │
+ │
+ │ waiting...
+ │
+ │
+ ▼
+Result
 ```
 
-This is the project's first real multi-agent workflow.
+the user can see:
+
+```text
+Investigation started
+
+Docker Agent selected
+
+Docker Agent started
+
+container_list started
+
+container_list completed
+
+container_logs started
+
+container_logs completed
+
+Building final diagnosis
+
+Investigation completed
+```
+
+This makes agent behavior much easier to understand.
 
 ---
 
-# 13. Agent Iteration Limits
+# 20. Investigation Events
 
-Token/cost control is important because nested agents can produce many
-model calls.
+Events are generated during agent execution.
 
-Current development configuration uses a small limit:
-
-```env
-AGENT_MAX_ITERATIONS=2
-```
-
-The intent is also to configure:
-
-```env
-ORCHESTRATOR_MAX_ITERATIONS=2
-```
-
-A specialist may therefore perform approximately:
+Examples:
 
 ```text
-Iteration 1
-    ↓
-discover/check
-
-Iteration 2
-    ↓
-investigate further
-
-    ↓
-forced final summary
+investigation_started
+specialist_selected
+agent_started
+tool_started
+tool_completed
+agent_completed
+synthesizing
+investigation_completed
 ```
 
-If the investigation limit is reached while the model is still
-requesting tools, the code makes a final model call without tools and
-asks it to summarize only the evidence already collected.
-
-This avoids ending with:
-
-```text
-Agent stopped after reaching maximum iterations.
-```
-
-without a useful result.
-
----
-
-# 14. FastAPI
-
-## Status
-
-**Initial API implementation created; Dockerization is currently in
-progress.**
-
-The FastAPI layer is intended to expose the multi-agent system as an
-HTTP service.
-
-Planned/current endpoints:
-
-```text
-GET  /health
-POST /investigate
-```
-
-Example:
-
-```http
-POST /investigate
-Content-Type: application/json
-```
+Tool events can also contain metadata such as:
 
 ```json
 {
-  "message": "Why is my worker failing?"
+  "agent": "docker",
+  "tool": "container_logs",
+  "arguments": {
+    "id_or_name": "css-proxy",
+    "tail": 40
+  }
 }
 ```
 
-Flow:
+This gives us observability into the agent's behavior.
+
+---
+
+# 21. Investigation History
+
+Investigations are persisted in PostgreSQL.
+
+Each investigation stores information such as:
 
 ```text
-HTTP request
-    │
-    ▼
+ID
+user message
+status
+text result
+structured diagnosis
+error
+creation time
+completion time
+events
+```
+
+Example investigation ID:
+
+```text
+27f9b6b8-6401-416a-8575-aab6c91f9ead
+```
+
+The API supports retrieving previous investigations.
+
+Example:
+
+```text
+GET /investigations
+```
+
+and:
+
+```text
+GET /investigations/{id}
+```
+
+This means investigations survive page refreshes and container restarts as long as the history database persists.
+
+---
+
+# 22. Structured Diagnosis
+
+Originally, the LLM returned free-form Markdown such as:
+
+```text
+**Unhealthy containers found:**
+
+- css-proxy — crash looping
+- floci-ui_floci_1 — unhealthy
+```
+
+This worked, but made dashboard rendering difficult.
+
+The project now uses a structured diagnosis format.
+
+Example:
+
+```json
+{
+  "summary": {
+    "status": "critical",
+    "total_issues": 2,
+    "critical": 1,
+    "warnings": 1,
+    "healthy": 0,
+    "headline": "Docker problems detected"
+  },
+  "issues": [
+    {
+      "resource": "css-proxy",
+      "resource_type": "docker",
+      "status": "restarting",
+      "severity": "critical",
+      "problem": "Crash loop",
+      "evidence": "host not found in upstream \"cssportal_app:8080\"",
+      "likely_cause": "Docker networking or hostname resolution",
+      "recommendation": "Inspect the Docker network configuration."
+    }
+  ],
+  "narrative": "The Docker environment contains an active proxy crash loop."
+}
+```
+
+This separates:
+
+```text
+AI reasoning/output
+        │
+        ▼
+Structured data
+        │
+        ▼
+UI presentation
+```
+
+The LLM no longer decides how the dashboard should visually display the result.
+
+---
+
+# 23. Diagnosis Dashboard
+
+The dashboard can now display structured findings as a table.
+
+Example:
+
+```text
+┌──────────────────────┬──────────┬────────────┬──────────────┬──────────┐
+│ RESOURCE             │ TYPE     │ STATUS     │ PROBLEM      │ SEVERITY │
+├──────────────────────┼──────────┼────────────┼──────────────┼──────────┤
+│ css-proxy            │ Docker   │ Restarting │ Crash loop   │ Critical │
+│ floci-ui_floci_1     │ Docker   │ Exited     │ Health check │ Warning  │
+└──────────────────────┴──────────┴────────────┴──────────────┴──────────┘
+```
+
+Each finding can also display:
+
+```text
+Problem
+Evidence
+Likely Cause
+Recommended Next Step
+```
+
+Severity levels currently include:
+
+```text
+Critical
+Warning
+Info
+Healthy
+```
+
+The same UI structure can later display findings from all specialist agents:
+
+```text
+RESOURCE            TYPE       STATUS       PROBLEM
+────────────────────────────────────────────────────────
+css-proxy           Docker     Restarting   Crash loop
+postgres            Database   Blocked      Lock contention
+api.example.com     Network    Timeout      TCP unreachable
+```
+
+---
+
+# 24. History Database Structured Results
+
+The `investigations` table now stores both:
+
+```text
+result
+```
+
+and:
+
+```text
+result_json
+```
+
+`result` stores the readable narrative.
+
+`result_json` stores the structured diagnosis.
+
+The existing database was migrated with:
+
+```sql
+ALTER TABLE investigations
+ADD COLUMN IF NOT EXISTS result_json JSONB;
+```
+
+Older investigations remain compatible.
+
+If an old investigation does not contain structured JSON, the dashboard falls back to displaying the original textual diagnosis.
+
+---
+
+# 25. Current Investigation Flow
+
+The complete current workflow is:
+
+```text
+User
+ │
+ ▼
+Next.js Dashboard
+ │
+ │ POST investigation
+ ▼
 FastAPI
-    │
-    ▼
+ │
+ ├── Create history record
+ │
+ ▼
 Orchestrator
-    │
-    ▼
-Specialist agents
-    │
-    ▼
-MCP/tools
-    │
-    ▼
-Diagnosis
-    │
-    ▼
-JSON response
+ │
+ ├── Understand request
+ │
+ ├── Select specialist
+ │
+ ▼
+Specialist Agent
+ │
+ ├── Select MCP tool
+ │
+ ├── Execute read-only tool
+ │
+ ├── Inspect result
+ │
+ ├── Possibly select another tool
+ │
+ ▼
+Specialist Result
+ │
+ ▼
+Orchestrator
+ │
+ ├── Combine evidence
+ │
+ ├── Generate structured JSON
+ │
+ ▼
+Structured Diagnosis
+ │
+ ├── Summary
+ │
+ ├── Issues
+ │
+ ├── Severity
+ │
+ ├── Evidence
+ │
+ ├── Likely Cause
+ │
+ ├── Recommendation
+ │
+ └── Narrative
+ │
+ ├──────────────► PostgreSQL History
+ │
+ ▼
+FastAPI SSE
+ │
+ ▼
+Next.js Dashboard
+ │
+ ├── Progress
+ ├── Diagnosis table
+ ├── Severity badges
+ ├── Evidence cards
+ └── Analysis
 ```
 
 ---
 
-# 15. Dockerizing the AI Platform
+# 26. Project Structure
 
-## Status
-
-**In progress.**
-
-The project was initially developed using a Python virtual environment.
-
-The runtime is now being moved into Docker so the final application does
-not depend on manually activating `.venv`.
-
-The intended API container includes:
-
-```text
-Python 3.12
-Node.js 22+
-Docker CLI
-DBHub
-FastAPI/Uvicorn
-MCP Python SDK
-OpenAI-compatible Python client
-project source code
-```
-
-The container needs Docker access because the Docker MCP server must
-inspect the host Docker daemon.
-
-The current Compose design mounts:
-
-```text
-/var/run/docker.sock
-```
-
-and uses the existing Docker MCP read-only configuration plus the
-application tool allowlist.
-
-The API is also intended to use host networking during this learning
-stage so it can reach the lab PostgreSQL endpoint at:
-
-```text
-127.0.0.1:55433
-```
-
-and inspect host networking accurately.
-
-### Current build issue
-
-The first Docker build stopped on a Dockerfile syntax error caused by
-writing the JSON-form `CMD` across multiple Dockerfile instructions.
-
-Incorrect:
-
-```dockerfile
-CMD [
-    "uvicorn",
-    "main:app",
-    ...
-]
-```
-
-It was changed to:
-
-```dockerfile
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
-```
-
-The next step is to rebuild and verify that Docker CLI and DBHub are
-correctly available inside the resulting image.
-
----
-
-# 16. Current Project Structure
-
-Approximate structure:
+Current structure is approximately:
 
 ```text
 ai-agents/
 │
 ├── .env
-├── .env.example
-├── .dockerignore
-├── Dockerfile
 ├── docker-compose.yml
-├── requirements.txt
+├── Dockerfile
+├── README.md
 │
 ├── apps/
 │   │
 │   ├── agent/
 │   │   │
 │   │   ├── agents/
-│   │   │   ├── __init__.py
 │   │   │   ├── docker_agent.py
 │   │   │   ├── database_agent.py
 │   │   │   ├── network_agent.py
 │   │   │   └── orchestrator.py
 │   │   │
 │   │   ├── tools/
-│   │   │   ├── __init__.py
-│   │   │   ├── docker_tools.py
-│   │   │   ├── tool_registry.py
-│   │   │   └── network_tools.py
-│   │   │
 │   │   ├── config.py
+│   │   ├── events.py
 │   │   ├── llm.py
 │   │   ├── mcp_client.py
 │   │   ├── database_mcp_client.py
 │   │   ├── dbhub.toml
-│   │   ├── main.py
-│   │   └── test_*.py
+│   │   └── main.py
 │   │
-│   └── api/
-│       └── main.py
+│   ├── api/
+│   │   ├── main.py
+│   │   └── history.py
+│   │
+│   └── dashboard/
+│       │
+│       ├── app/
+│       │   ├── page.tsx
+│       │   └── ...
+│       │
+│       ├── Dockerfile
+│       ├── package.json
+│       └── ...
 │
-└── infra/
-    └── database/
-        ├── docker-compose.yml
-        └── init/
-            └── 01-init.sh
+└── ...
 ```
-
-Some old manually implemented Docker tools remain intentionally as
-learning/reference code even though the Docker Agent now uses MCP.
 
 ---
 
-# 17. What We Have Learned So Far
+# 27. Running the Project
 
-The project has already covered several important AI-agent concepts.
+The application should be run through Docker.
 
-### Tool calling
+Build:
 
-An LLM cannot inspect Docker simply because it "knows Docker."
+```bash
+cd ~/ai-agents
 
-It needs a tool:
+docker compose build
+```
+
+Start:
+
+```bash
+docker compose up -d
+```
+
+Check containers:
+
+```bash
+docker compose ps
+```
+
+Check API logs:
+
+```bash
+docker logs ai-agents-api --tail 100
+```
+
+Check dashboard logs:
+
+```bash
+docker logs ai-agents-dashboard --tail 100
+```
+
+---
+
+# 28. Example Low-Cost Investigation
+
+Because LLM usage costs tokens, small focused prompts are useful during development.
+
+Example:
+
+```text
+List any Docker containers that are currently restarting or unhealthy. Use the minimum tools needed. Keep the diagnosis concise.
+```
+
+This helps test:
+
+```text
+Dashboard
+→ API
+→ Orchestrator
+→ Docker Agent
+→ MCP
+→ Docker
+→ Structured Diagnosis
+→ History
+→ Dashboard
+```
+
+without running an unnecessarily large investigation.
+
+---
+
+# 29. What We Have Achieved
+
+The project is no longer just a simple chatbot.
+
+We have built the foundations of a real agentic system.
+
+Completed:
+
+- [x] Linux VPS environment
+- [x] Docker-based deployment
+- [x] Configurable LLM provider
+- [x] DeepSeek integration
+- [x] Tool-calling architecture
+- [x] Docker MCP integration
+- [x] Docker Agent
+- [x] Docker read-only tool allowlist
+- [x] Real Docker infrastructure inspection
+- [x] Container log investigation
+- [x] Database MCP integration
+- [x] PostgreSQL lab
+- [x] Read-only PostgreSQL user
+- [x] Database Agent
+- [x] Database diagnostics
+- [x] Network Agent
+- [x] Agent Orchestrator
+- [x] Specialist routing
+- [x] FastAPI backend
+- [x] Next.js dashboard
+- [x] Dockerized dashboard
+- [x] Nginx Proxy Manager integration
+- [x] Real-time SSE progress
+- [x] Tool execution progress
+- [x] PostgreSQL investigation history
+- [x] Investigation event persistence
+- [x] Structured JSON diagnosis
+- [x] Severity classification
+- [x] Diagnosis table
+- [x] Evidence cards
+- [x] Root-cause presentation
+- [x] Backward compatibility for old textual investigations
+- [x] Read-only safety architecture
+
+---
+
+# 30. What We Are Learning
+
+This project demonstrates several important AI-agent concepts.
+
+## Tool Calling
+
+An LLM cannot magically access Docker.
+
+It needs tools.
 
 ```text
 LLM
- ↓
-tool call
- ↓
-real system
- ↓
-tool result
- ↓
-LLM reasoning
-```
-
-### MCP
-
-MCP allows external servers to advertise reusable tools instead of
-requiring every integration to be implemented manually.
-
-### Agent loops
-
-Agents may repeatedly:
-
-```text
-reason
- ↓
-select tool
- ↓
-receive evidence
- ↓
-reason again
-```
-
-until they have enough evidence.
-
-### Specialized agents
-
-Instead of giving one model every tool:
-
-```text
-Docker + SQL + networking + everything
-```
-
-the system uses focused specialists.
-
-### Orchestration
-
-A higher-level agent can delegate tasks to specialists and combine their
-findings.
-
-### Least privilege
-
-Read-only behavior should be enforced at multiple layers:
-
-```text
-LLM instructions
-       ↓
-application allowlist
-       ↓
-MCP restrictions
-       ↓
-database permissions
-       ↓
-underlying infrastructure
-```
-
-### Cost control
-
-Agent systems can generate more model calls than ordinary chat because
-an orchestrator may call specialists that themselves perform multiple
-LLM/tool iterations.
-
-Iteration limits and smaller tool sets help control cost.
-
----
-
-# 18. Current Milestone
-
-The current milestone is:
-
-> **Containerize the FastAPI + multi-agent runtime.**
-
-Current work:
-
-```text
-Dockerfile
-   ↓
-build API/agent image
-   ↓
-verify Docker CLI
-   ↓
-verify DBHub
-   ↓
-start FastAPI container
-   ↓
-GET /health
-   ↓
-POST /investigate
+ │
+ ▼
+Tool Call
+ │
+ ▼
+Docker MCP
+ │
+ ▼
+Docker Engine
 ```
 
 ---
 
-# 19. Next Milestones
+## MCP
 
-After the API container works:
+Instead of manually implementing every possible tool:
 
-```text
-1. Finish FastAPI container
-        ↓
-2. Build simple Next.js dashboard
-        ↓
-3. Containerize dashboard
-        ↓
-4. Connect dashboard → FastAPI
-        ↓
-5. Display investigation result
-        ↓
-6. Display agent/tool activity
-        ↓
-7. Store investigation history
-        ↓
-8. Add authentication
-        ↓
-9. Put application behind Nginx
-        ↓
-10. Carefully connect agents to real application resources
+```python
+def list_containers():
+    ...
+
+def inspect_container():
+    ...
+
+def read_logs():
+    ...
 ```
 
-The first dashboard does not need to be sophisticated.
+an MCP server can expose an existing standardized toolset.
 
-Target:
+---
+
+## Agent Loops
+
+Agents do not necessarily call one tool and stop.
+
+They can perform:
 
 ```text
-┌─────────────────────────────────────────────┐
-│ AI DevOps Agent                             │
-├─────────────────────────────────────────────┤
-│                                             │
-│ Ask about your infrastructure               │
-│ ┌─────────────────────────────────────────┐ │
-│ │ Why is my worker failing?               │ │
-│ └─────────────────────────────────────────┘ │
-│                                    [Ask]    │
-│                                             │
-│ Investigation                              │
-│ ✓ Docker Agent                             │
-│ ✓ Checked containers                       │
-│ ✓ Read logs                                │
-│ ✓ Database Agent                           │
-│                                             │
-│ Result                                     │
-│ ─────────────────────────────────────────  │
-│ The worker appears to be failing because… │
-│                                             │
-└─────────────────────────────────────────────┘
+Observe
+→ Reason
+→ Tool
+→ Observe
+→ Reason
+→ Tool
+→ Diagnose
 ```
 
 ---
 
-# 20. Long-Term Ideas
+## Specialist Agents
 
-Once the core learning project is stable, possible extensions include:
-
-- investigation history
-- streaming tool activity to the dashboard
-- Prometheus/Grafana metrics integration
-- Redis diagnostics
-- log-analysis agent
-- security agent
-- Kubernetes agent
-- cloud provider agent
-- GitHub/CI agent
-- alerts
-- scheduled health investigations
-- incident reports
-- agent memory
-- user authentication
-- multiple infrastructure environments
-- approval-based remediation
-
-Any future remediation should use explicit human approval rather than
-silently giving the diagnostic agents unrestricted write access.
-
----
-
-## Current Status
+Rather than giving one AI every capability, responsibilities are separated:
 
 ```text
-DeepSeek                         ✅
-Configurable provider/model      ✅
-Custom agent loop                ✅
-Tool calling                     ✅
-MCP                              ✅
-Docker MCP                       ✅
-Docker Agent                     ✅
-PostgreSQL lab                   ✅
-Read-only DB account             ✅
-DBHub MCP                        ✅
-Database Agent                   ✅
-Network diagnostic tools         ✅
-Network Agent                    ✅ / integration stage
-Orchestrator                     ✅
-Multi-agent delegation           ✅
-FastAPI                          🚧
-Dockerized API runtime           🚧
-Next.js dashboard                ⏳
-Nginx/public deployment          ⏳
+Docker Agent
+Database Agent
+Network Agent
 ```
+
+This improves specialization and makes permissions easier to control.
 
 ---
 
-## Philosophy
+## Orchestration
 
-The project is intentionally being built incrementally.
+The orchestrator decides:
 
-The goal is not merely to produce a working AI application, but to
-understand each layer:
+```text
+Which agent should investigate this?
+```
+
+This separates routing from specialist execution.
+
+---
+
+## Structured Outputs
+
+Free-form text is useful for humans.
+
+Structured output is better for applications.
+
+Therefore:
 
 ```text
 LLM
- ↓
-tool calling
- ↓
-MCP
- ↓
-specialist agent
- ↓
-orchestration
- ↓
-API
- ↓
-dashboard
- ↓
-production deployment
+ │
+ ▼
+Structured JSON
+ │
+ ▼
+Frontend
+ │
+ ▼
+Tables / badges / cards
 ```
 
-That makes the project both a practical DevOps assistant and a hands-on
-environment for learning modern AI-agent architecture.
+---
+
+## Agent Observability
+
+A production-quality agent system should expose what it is doing.
+
+Our event architecture gives visibility into:
+
+```text
+agent selection
+tool selection
+tool execution
+investigation progress
+completion
+```
+
+---
+
+## Safety
+
+Agent safety should not depend only on prompts.
+
+Better:
+
+```text
+Prompt restrictions
+        +
+Tool allowlist
+        +
+Read-only credentials
+        +
+Infrastructure permissions
+```
+
+---
+
+# 31. Current Limitations
+
+The project still has several limitations.
+
+### Investigation depth
+
+Low iteration limits can prevent specialists from completing complex investigations.
+
+### Structured output
+
+The structured diagnosis is currently generated by prompting the LLM for JSON and validating/parsing the response.
+
+Future versions should use stronger schema validation.
+
+### Network Agent
+
+The Network Agent can be expanded with more standardized MCP tooling.
+
+### Cross-agent reasoning
+
+The orchestrator can route to specialists, but deeper multi-agent collaboration can still be improved.
+
+### Authentication
+
+The dashboard/API should eventually have authentication before being treated as a production management interface.
+
+### Resource usage
+
+The VPS has limited RAM and no swap was initially configured, so Docker image builds and multiple services can consume significant memory.
+
+---
+
+# 32. Recommended Next Milestones
+
+## Milestone 1 — Strong Diagnosis Schema
+
+Add Pydantic models for:
+
+```text
+Diagnosis
+DiagnosisSummary
+DiagnosisIssue
+```
+
+so malformed model responses cannot silently enter the application.
+
+---
+
+## Milestone 2 — Better Investigation Details
+
+Allow clicking a finding such as:
+
+```text
+css-proxy
+```
+
+to inspect:
+
+```text
+tool calls
+raw evidence
+container metadata
+logs
+timeline
+```
+
+---
+
+## Milestone 3 — Cross-Agent Investigation
+
+Allow the orchestrator to correlate:
+
+```text
+Docker
++
+Database
++
+Network
+```
+
+during one investigation.
+
+Example:
+
+```text
+API unavailable
+   │
+   ├── Docker Agent → container healthy
+   ├── Database Agent → database healthy
+   └── Network Agent → DNS incorrect
+```
+
+---
+
+## Milestone 4 — Infrastructure Overview
+
+Add a dashboard overview showing:
+
+```text
+Docker
+Database
+Network
+Investigations
+Critical findings
+Recent incidents
+```
+
+---
+
+## Milestone 5 — Better Observability
+
+Track:
+
+```text
+LLM calls
+tokens
+tool calls
+investigation duration
+agent duration
+errors
+cost per investigation
+```
+
+---
+
+## Milestone 6 — Safe Action Proposals
+
+The system should remain read-only.
+
+Later, agents may be allowed to **propose** remediation:
+
+```text
+Recommended action:
+
+Attach css-proxy to network X.
+
+[Copy command]
+```
+
+but execution should still require explicit human action.
+
+The architecture should remain:
+
+```text
+AI investigates
+AI recommends
+Human decides
+Human executes
+```
+
+rather than:
+
+```text
+AI detects
+AI changes production automatically
+```
+
+---
+
+# 33. Current Project Status
+
+Current stage:
+
+```text
+             AI DEVOPS AGENT
+
+                    User
+                     │
+                     ▼
+              Web Dashboard        ✓
+                     │
+                     ▼
+               FastAPI API         ✓
+                     │
+                     ▼
+               Orchestrator        ✓
+                     │
+        ┌────────────┼────────────┐
+        │            │            │
+        ▼            ▼            ▼
+     Docker       Database      Network
+      Agent         Agent        Agent
+        ✓             ✓            ✓
+        │             │            │
+        ▼             ▼            ▼
+    Docker MCP     DB MCP      Network Tools
+        ✓             ✓            ✓
+        │             │            │
+        └─────────────┼────────────┘
+                      │
+                      ▼
+              Structured Diagnosis ✓
+                      │
+               ┌──────┴──────┐
+               ▼             ▼
+          History DB       Dashboard
+               ✓             ✓
+```
+
+We have completed the main foundation of the multi-agent system.
+
+The next phase is no longer about simply making an LLM call tools.
+
+The next phase is about making the system:
+
+```text
+more reliable
+more observable
+more structured
+more efficient
+and better at coordinating multiple agents
+```
+
+while preserving the read-only safety model.
