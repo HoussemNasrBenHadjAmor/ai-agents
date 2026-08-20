@@ -1,6 +1,9 @@
 import json
 
+from pydantic import ValidationError
+
 from config import ORCHESTRATOR_MAX_ITERATIONS
+from diagnosis_schema import Diagnosis
 from events import EventCallback, emit
 from llm import chat
 
@@ -50,15 +53,16 @@ Use for:
 - routes
 - connectivity problems
 
-Your job is to decide which specialist agent or agents should
-investigate the user's request.
+Your job is to decide which specialist agent or agents
+should investigate the user's request.
 
 Use specialists instead of guessing.
 
-If a problem could involve multiple systems, you may use
-multiple specialists.
+If a problem could involve multiple systems,
+you may use multiple specialists.
 
-After receiving specialist results, analyze the evidence together.
+After receiving specialist results,
+analyze the evidence together.
 
 Never claim a system was inspected unless a specialist
 actually inspected it.
@@ -66,55 +70,8 @@ actually inspected it.
 Everything must remain read-only.
 
 Never ask a specialist to modify infrastructure.
-"""
 
-
-STRUCTURED_FINAL_PROMPT = """
-Using ONLY the specialist evidence already collected, produce the final
-diagnosis as VALID JSON.
-
-Do not use Markdown fences.
-
-Do not include any text before or after the JSON.
-
-Return exactly this general structure:
-
-{
-  "summary": {
-    "status": "healthy | degraded | critical",
-    "total_issues": 0,
-    "critical": 0,
-    "warnings": 0,
-    "healthy": 0,
-    "headline": "Short overall summary"
-  },
-
-  "issues": [
-    {
-      "resource": "resource name",
-      "resource_type": "docker | database | network | other",
-      "status": "current technical status",
-      "severity": "critical | warning | info | healthy",
-      "problem": "short problem title",
-      "evidence": "important concrete evidence",
-      "likely_cause": "likely root cause",
-      "recommendation": "next READ-ONLY investigation or recommendation"
-    }
-  ],
-
-  "narrative": "Short readable explanation of the overall diagnosis."
-}
-
-Rules:
-
-- Never invent evidence.
-- Only report findings supported by specialist results.
-- If something is uncertain, clearly say so.
-- Keep fields concise.
-- Do not recommend automatic infrastructure modifications.
-- Recommendations must remain read-only or require human action.
-- Do not expose private chain-of-thought.
-- Do not return Markdown.
+Do not expose private chain-of-thought.
 """
 
 
@@ -139,7 +96,9 @@ ORCHESTRATOR_TOOLS = [
                         ),
                     }
                 },
-                "required": ["task"],
+                "required": [
+                    "task",
+                ],
                 "additionalProperties": False,
             },
         },
@@ -165,7 +124,9 @@ ORCHESTRATOR_TOOLS = [
                         ),
                     }
                 },
-                "required": ["task"],
+                "required": [
+                    "task",
+                ],
                 "additionalProperties": False,
             },
         },
@@ -187,12 +148,45 @@ ORCHESTRATOR_TOOLS = [
                         "description": ("Detailed network investigation task."),
                     }
                 },
-                "required": ["task"],
+                "required": [
+                    "task",
+                ],
                 "additionalProperties": False,
             },
         },
     },
 ]
+
+
+DIAGNOSIS_JSON_SCHEMA = Diagnosis.model_json_schema()
+
+
+STRUCTURED_FINAL_PROMPT = f"""
+Using ONLY the specialist evidence already collected,
+produce the final diagnosis as VALID JSON.
+
+Do not use Markdown fences.
+
+Do not return any text before or after the JSON.
+
+Your response MUST conform to this JSON Schema:
+
+{json.dumps(
+    DIAGNOSIS_JSON_SCHEMA,
+    indent=2,
+)}
+
+Rules:
+
+- Never invent evidence.
+- Only report findings supported by specialist results.
+- Clearly state uncertainty where evidence is incomplete.
+- Keep fields concise.
+- Recommendations must remain read-only or require human action.
+- Do not recommend automatic infrastructure modification.
+- Do not expose private chain-of-thought.
+- Return JSON only.
+"""
 
 
 class Orchestrator:
@@ -273,7 +267,7 @@ class Orchestrator:
                 event_callback=event_callback,
             )
 
-        return f"ERROR: Unknown specialist: {tool_name}"
+        return f"ERROR: Unknown specialist: " f"{tool_name}"
 
     async def build_structured_diagnosis(
         self,
@@ -302,71 +296,68 @@ class Orchestrator:
         raw_content = final_response.content or "{}"
 
         try:
-            diagnosis = json.loads(raw_content)
 
-        except json.JSONDecodeError:
+            raw_json = json.loads(raw_content)
 
-            diagnosis = {
-                "summary": {
-                    "status": "degraded",
-                    "total_issues": 0,
-                    "critical": 0,
-                    "warnings": 0,
-                    "healthy": 0,
-                    "headline": ("Structured diagnosis " "could not be parsed"),
-                },
-                "issues": [],
-                "narrative": raw_content,
-            }
+            validated = Diagnosis.model_validate(raw_json)
 
-        diagnosis.setdefault(
-            "summary",
-            {},
-        )
+            diagnosis = validated.model_dump()
 
-        diagnosis.setdefault(
-            "issues",
-            [],
-        )
+            print("[Orchestrator] " "Structured diagnosis validated successfully.")
 
-        diagnosis.setdefault(
-            "narrative",
-            "",
-        )
+        except json.JSONDecodeError as exc:
 
-        summary = diagnosis["summary"]
+            print("[Orchestrator] " "Diagnosis JSON parsing failed:")
 
-        summary.setdefault(
-            "status",
-            "degraded",
-        )
+            print(exc)
 
-        summary.setdefault(
-            "total_issues",
-            len(diagnosis["issues"]),
-        )
+            diagnosis = self.build_fallback_diagnosis(
+                raw_content=raw_content,
+                reason=("The model returned invalid JSON."),
+            )
 
-        summary.setdefault(
-            "critical",
-            0,
-        )
+        except ValidationError as exc:
 
-        summary.setdefault(
-            "warnings",
-            0,
-        )
+            print("[Orchestrator] " "Diagnosis schema validation failed:")
 
-        summary.setdefault(
-            "healthy",
-            0,
-        )
+            print(exc)
 
-        summary.setdefault(
-            "headline",
-            "Infrastructure diagnosis",
-        )
+            diagnosis = self.build_fallback_diagnosis(
+                raw_content=raw_content,
+                reason=(
+                    "The model output did not match " "the required diagnosis schema."
+                ),
+            )
 
         return diagnosis
+
+    def build_fallback_diagnosis(
+        self,
+        raw_content: str,
+        reason: str,
+    ) -> dict:
+
+        fallback = Diagnosis(
+            summary={
+                "status": "degraded",
+                "total_issues": 0,
+                "critical": 0,
+                "warnings": 0,
+                "healthy": 0,
+                "headline": ("Structured diagnosis " "validation failed"),
+            },
+            issues=[],
+            narrative=(
+                f"{reason}\n\n"
+                "The investigation completed, "
+                "but the structured response could "
+                "not be validated.\n\n"
+                "Raw model output:\n\n"
+                f"{raw_content}"
+            ),
+        )
+
+        return fallback.model_dump()
 
     async def run(
         self,
@@ -409,6 +400,8 @@ class Orchestrator:
 
             if not response.tool_calls:
 
+                print("[Orchestrator] " "No additional specialists requested.")
+
                 diagnosis = await self.build_structured_diagnosis(
                     messages,
                     event_callback,
@@ -427,9 +420,11 @@ class Orchestrator:
                 tool_name = tool_call.function.name
 
                 try:
+
                     arguments = json.loads(tool_call.function.arguments or "{}")
 
                 except json.JSONDecodeError:
+
                     arguments = {}
 
                 print(f"[Specialist requested] " f"{tool_name}")
@@ -447,6 +442,8 @@ class Orchestrator:
                         "content": result,
                     }
                 )
+
+        print("[Orchestrator] " "Maximum orchestration rounds reached.")
 
         diagnosis = await self.build_structured_diagnosis(
             messages,

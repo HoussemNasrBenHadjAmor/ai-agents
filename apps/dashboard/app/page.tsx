@@ -30,6 +30,17 @@ type Diagnosis = {
   narrative: string;
 };
 
+type InvestigationMetrics = {
+  duration_seconds: number;
+  agents_used: string[];
+  tool_calls: number;
+  llm_calls: number;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  estimated_cost_usd?: number;
+};
+
 type InvestigationEvent = {
   sequence?: number;
   type: string;
@@ -44,6 +55,8 @@ type InvestigationEvent = {
 
   diagnosis?: Diagnosis;
 
+  metrics?: InvestigationMetrics;
+
   arguments?: Record<string, unknown>;
 
   created_at?: string;
@@ -54,6 +67,7 @@ type InvestigationSummary = {
   message: string;
   status: string;
   headline?: string | null;
+  metrics?: InvestigationMetrics | null;
   created_at: string;
   completed_at?: string | null;
 };
@@ -66,6 +80,8 @@ type InvestigationDetail = {
   result?: string | null;
 
   diagnosis?: Diagnosis | null;
+
+  metrics?: InvestigationMetrics | null;
 
   error?: string | null;
 
@@ -303,6 +319,52 @@ function InfoRow({
   );
 }
 
+function MetricCard({ label, value }: { label: string; value: string }) {
+  return (
+    <div
+      style={{
+        padding: "14px",
+
+        background: "#18181b",
+
+        border: "1px solid #27272a",
+
+        borderRadius: "9px",
+      }}
+    >
+      <div
+        style={{
+          color: "#71717a",
+
+          fontSize: "11px",
+
+          textTransform: "uppercase",
+
+          letterSpacing: "0.06em",
+
+          marginBottom: "7px",
+        }}
+      >
+        {label}
+      </div>
+
+      <div
+        style={{
+          fontSize: "15px",
+
+          fontWeight: 600,
+
+          color: "#f4f4f5",
+
+          wordBreak: "break-word",
+        }}
+      >
+        {value}
+      </div>
+    </div>
+  );
+}
+
 function formatStatus(status: string) {
   const lower = status.toLowerCase();
 
@@ -331,6 +393,8 @@ export default function Home() {
   const [result, setResult] = useState("");
 
   const [diagnosis, setDiagnosis] = useState<Diagnosis | null>(null);
+
+  const [metrics, setMetrics] = useState<InvestigationMetrics | null>(null);
 
   const [error, setError] = useState("");
 
@@ -402,6 +466,8 @@ export default function Home() {
 
       setDiagnosis(data.diagnosis ?? null);
 
+      setMetrics(data.metrics ?? null);
+
       if (data.error) {
         setError(data.error);
       }
@@ -424,6 +490,8 @@ export default function Home() {
     setResult("");
 
     setDiagnosis(null);
+
+    setMetrics(null);
 
     setError("");
 
@@ -499,6 +567,10 @@ export default function Home() {
 
             if (event.diagnosis) {
               setDiagnosis(event.diagnosis);
+            }
+
+            if (event.metrics) {
+              setMetrics(event.metrics);
             }
 
             continue;
@@ -606,8 +678,6 @@ export default function Home() {
           minHeight: "100vh",
         }}
       >
-        {/* HISTORY */}
-
         <aside
           style={{
             borderRight: "1px solid #27272a",
@@ -770,8 +840,6 @@ export default function Home() {
           </div>
         </aside>
 
-        {/* MAIN */}
-
         <section
           style={{
             width: "100%",
@@ -804,8 +872,6 @@ export default function Home() {
               Read-only infrastructure investigation
             </p>
           </header>
-
-          {/* INPUT */}
 
           <section
             style={{
@@ -859,8 +925,6 @@ export default function Home() {
             </button>
           </section>
 
-          {/* PROMPT */}
-
           {selectedPrompt && (
             <section
               style={{
@@ -895,8 +959,6 @@ export default function Home() {
             </section>
           )}
 
-          {/* ERROR */}
-
           {error && (
             <section
               style={{
@@ -914,8 +976,6 @@ export default function Home() {
               {error}
             </section>
           )}
-
-          {/* PROGRESS */}
 
           {events.length > 0 && (
             <section
@@ -993,7 +1053,95 @@ export default function Home() {
             </section>
           )}
 
-          {/* STRUCTURED DIAGNOSIS */}
+          {metrics && (
+            <section
+              style={{
+                marginTop: "32px",
+
+                padding: "20px",
+
+                background: "#111113",
+
+                border: "1px solid #27272a",
+
+                borderRadius: "12px",
+              }}
+            >
+              <div
+                style={{
+                  color: "#71717a",
+
+                  fontSize: "12px",
+
+                  textTransform: "uppercase",
+
+                  letterSpacing: "0.08em",
+
+                  marginBottom: "16px",
+                }}
+              >
+                Investigation Metrics
+              </div>
+
+              <div
+                style={{
+                  display: "grid",
+
+                  gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
+
+                  gap: "12px",
+                }}
+              >
+                <MetricCard
+                  label="Duration"
+                  value={`${metrics.duration_seconds}s`}
+                />
+
+                <MetricCard
+                  label="Agents"
+                  value={
+                    metrics.agents_used.length
+                      ? metrics.agents_used.join(", ")
+                      : "None"
+                  }
+                />
+
+                <MetricCard
+                  label="Tool Calls"
+                  value={String(metrics.tool_calls)}
+                />
+
+                <MetricCard
+                  label="LLM Calls"
+                  value={String(metrics.llm_calls)}
+                />
+
+                <MetricCard
+                  label="Input Tokens"
+                  value={metrics.input_tokens.toLocaleString()}
+                />
+
+                <MetricCard
+                  label="Output Tokens"
+                  value={metrics.output_tokens.toLocaleString()}
+                />
+
+                <MetricCard
+                  label="Total Tokens"
+                  value={metrics.total_tokens.toLocaleString()}
+                />
+
+                <MetricCard
+                  label="Estimated Cost"
+                  value={
+                    metrics.estimated_cost_usd !== undefined
+                      ? `$${metrics.estimated_cost_usd.toFixed(6)}`
+                      : "—"
+                  }
+                />
+              </div>
+            </section>
+          )}
 
           {diagnosis && (
             <section
@@ -1001,8 +1149,6 @@ export default function Home() {
                 marginTop: "32px",
               }}
             >
-              {/* SUMMARY */}
-
               <div
                 style={{
                   padding: "24px",
@@ -1095,8 +1241,6 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* TABLE */}
-
               {diagnosis.issues.length > 0 && (
                 <div
                   style={{
@@ -1161,8 +1305,6 @@ export default function Home() {
                   </table>
                 </div>
               )}
-
-              {/* DETAILS */}
 
               <div
                 style={{
@@ -1244,8 +1386,6 @@ export default function Home() {
                 ))}
               </div>
 
-              {/* NARRATIVE */}
-
               {diagnosis.narrative && (
                 <div
                   style={{
@@ -1283,8 +1423,6 @@ export default function Home() {
               )}
             </section>
           )}
-
-          {/* OLD HISTORY FALLBACK */}
 
           {!diagnosis && result && (
             <section

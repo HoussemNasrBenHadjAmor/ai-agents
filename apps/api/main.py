@@ -1,6 +1,7 @@
 import asyncio
 import json
 import sys
+import time
 
 from pathlib import Path
 
@@ -28,6 +29,16 @@ from agents.docker_agent import DockerAgent
 from agents.network_agent import NetworkAgent
 from agents.orchestrator import Orchestrator
 
+from config import (
+    AI_INPUT_COST_PER_1M,
+    AI_OUTPUT_COST_PER_1M,
+)
+
+from llm import (
+    start_usage_tracking,
+    stop_usage_tracking,
+)
+
 from history import (
     complete_investigation,
     create_investigation,
@@ -39,8 +50,8 @@ from history import (
 )
 
 app = FastAPI(
-    title=("AI DevOps Agent API"),
-    version="0.2.0",
+    title="AI DevOps Agent API",
+    version="0.3.0",
 )
 
 
@@ -97,15 +108,12 @@ async def shutdown():
     print("[API] Closing agents...")
 
     if network_agent:
-
         await network_agent.close()
 
     if database_agent:
-
         await database_agent.close()
 
     if docker_agent:
-
         await docker_agent.close()
 
 
@@ -123,16 +131,61 @@ async def investigate(
     request: InvestigationRequest,
 ):
 
-    diagnosis = await orchestrator.run(request.message)
+    usage_token = start_usage_tracking()
 
-    return {
-        "message": request.message,
-        "diagnosis": diagnosis,
-        "result": diagnosis.get(
-            "narrative",
-            "",
-        ),
-    }
+    started_at = time.perf_counter()
+
+    try:
+
+        diagnosis = await orchestrator.run(request.message)
+
+        usage = stop_usage_tracking(usage_token)
+
+        duration_seconds = time.perf_counter() - started_at
+
+        input_tokens = usage.input_tokens if usage else 0
+
+        output_tokens = usage.output_tokens if usage else 0
+
+        input_cost = input_tokens / 1_000_000 * AI_INPUT_COST_PER_1M
+
+        output_cost = output_tokens / 1_000_000 * AI_OUTPUT_COST_PER_1M
+
+        metrics = {
+            "duration_seconds": round(
+                duration_seconds,
+                2,
+            ),
+            "agents_used": [],
+            "tool_calls": 0,
+            "llm_calls": (usage.llm_calls if usage else 0),
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": (usage.total_tokens if usage else 0),
+            "estimated_cost_usd": round(
+                input_cost + output_cost,
+                6,
+            ),
+        }
+
+        return {
+            "message": request.message,
+            "diagnosis": diagnosis,
+            "metrics": metrics,
+            "result": diagnosis.get(
+                "narrative",
+                "",
+            ),
+        }
+
+    except Exception:
+
+        try:
+            stop_usage_tracking(usage_token)
+        except Exception:
+            pass
+
+        raise
 
 
 @app.post("/investigate/stream")
@@ -148,13 +201,30 @@ async def investigate_stream(
 
     sequence = 0
 
+    started_at = time.perf_counter()
+
+    tool_calls = 0
+
+    agents_used = set()
+
     async def event_callback(
         event: dict,
     ):
 
         nonlocal sequence
+        nonlocal tool_calls
 
         sequence += 1
+
+        if event.get("type") == "tool_started":
+            tool_calls += 1
+
+        if event.get("type") == "specialist_selected":
+
+            agent = event.get("agent")
+
+            if agent:
+                agents_used.add(agent)
 
         await save_event(
             investigation_id,
@@ -166,6 +236,10 @@ async def investigate_stream(
 
     async def run_investigation():
 
+        usage_token = start_usage_tracking()
+
+        usage_stopped = False
+
         try:
 
             diagnosis = await orchestrator.run(
@@ -173,9 +247,45 @@ async def investigate_stream(
                 event_callback=event_callback,
             )
 
+            usage = stop_usage_tracking(usage_token)
+
+            usage_stopped = True
+
+            duration_seconds = time.perf_counter() - started_at
+
+            input_tokens = usage.input_tokens if usage else 0
+
+            output_tokens = usage.output_tokens if usage else 0
+
+            total_tokens = (
+                usage.total_tokens if usage else (input_tokens + output_tokens)
+            )
+
+            input_cost = input_tokens / 1_000_000 * AI_INPUT_COST_PER_1M
+
+            output_cost = output_tokens / 1_000_000 * AI_OUTPUT_COST_PER_1M
+
+            metrics = {
+                "duration_seconds": round(
+                    duration_seconds,
+                    2,
+                ),
+                "agents_used": sorted(agents_used),
+                "tool_calls": tool_calls,
+                "llm_calls": (usage.llm_calls if usage else 0),
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "total_tokens": total_tokens,
+                "estimated_cost_usd": round(
+                    input_cost + output_cost,
+                    6,
+                ),
+            }
+
             await complete_investigation(
                 investigation_id,
                 diagnosis,
+                metrics,
             )
 
             await queue.put(
@@ -183,6 +293,7 @@ async def investigate_stream(
                     "type": "result",
                     "investigation_id": investigation_id,
                     "diagnosis": diagnosis,
+                    "metrics": metrics,
                     "result": diagnosis.get(
                         "narrative",
                         "",
@@ -191,6 +302,14 @@ async def investigate_stream(
             )
 
         except Exception as exc:
+
+            if not usage_stopped:
+
+                try:
+                    stop_usage_tracking(usage_token)
+
+                except Exception:
+                    pass
 
             error_message = str(exc)
 
@@ -274,7 +393,7 @@ async def investigation_detail(
 
         raise HTTPException(
             status_code=404,
-            detail=("Investigation not found"),
+            detail="Investigation not found",
         )
 
     return investigation

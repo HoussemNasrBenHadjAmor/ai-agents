@@ -79,6 +79,11 @@ class Investigation(Base):
         nullable=True,
     )
 
+    metrics_json: Mapped[dict | None] = mapped_column(
+        JSON,
+        nullable=True,
+    )
+
     error: Mapped[str | None] = mapped_column(
         Text,
         nullable=True,
@@ -228,6 +233,7 @@ async def save_event(
 async def complete_investigation(
     investigation_id: str,
     diagnosis: dict,
+    metrics: dict,
 ):
 
     async with SessionLocal() as session:
@@ -243,6 +249,8 @@ async def complete_investigation(
         investigation.status = "completed"
 
         investigation.result_json = diagnosis
+
+        investigation.metrics_json = metrics
 
         investigation.result = diagnosis.get(
             "narrative",
@@ -305,6 +313,7 @@ async def list_investigations(
                     {},
                 )
                 .get("headline"),
+                "metrics": item.metrics_json,
             }
             for item in investigations
         ]
@@ -338,6 +347,7 @@ async def get_investigation(
             "status": investigation.status,
             "result": investigation.result,
             "diagnosis": investigation.result_json,
+            "metrics": investigation.metrics_json,
             "error": investigation.error,
             "created_at": investigation.created_at.isoformat(),
             "completed_at": (
