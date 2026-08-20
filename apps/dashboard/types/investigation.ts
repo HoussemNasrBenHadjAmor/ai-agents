@@ -43,7 +43,7 @@ export type InvestigationEvent = {
   message?: string | null;
   result?: string;
   diagnosis?: Diagnosis;
-  metrics?: InvestigationMetrics;
+  metrics?: InvestigationMetrics | null;
   arguments?: Record<string, unknown>;
   created_at?: string;
 };
@@ -70,4 +70,3 @@ export type InvestigationDetail = {
   completed_at?: string | null;
   events: InvestigationEvent[];
 };
-

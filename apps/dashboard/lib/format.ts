@@ -22,14 +22,10 @@ export function formatDuration(seconds?: number | null) {
     return "Unknown";
   }
 
-  if (seconds < 60) {
-    return `${seconds.toFixed(seconds < 10 ? 1 : 0)}s`;
-  }
-
-  const minutes = Math.floor(seconds / 60);
-  const remainingSeconds = Math.round(seconds % 60);
-
-  return `${minutes}m ${remainingSeconds}s`;
+  return `${new Intl.NumberFormat(undefined, {
+    maximumFractionDigits: 2,
+    minimumFractionDigits: Number.isInteger(seconds) ? 0 : 2,
+  }).format(seconds)}s`;
 }
 
 export function formatCost(value?: number) {
@@ -38,6 +34,19 @@ export function formatCost(value?: number) {
   }
 
   return `$${value.toFixed(6)}`;
+}
+
+export function formatAgentName(value: string) {
+  return value
+    .split(/([\s_-]+)/)
+    .map((part) => {
+      if (/^[\s_-]+$/.test(part) || part.length === 0) {
+        return part;
+      }
+
+      return `${part.charAt(0).toUpperCase()}${part.slice(1)}`;
+    })
+    .join("");
 }
 
 export function formatStatus(status: string) {
@@ -100,4 +109,3 @@ export function eventTone(type: string) {
 
   return "neutral";
 }
-

@@ -643,8 +643,44 @@ td strong {
 
 .metrics-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
   gap: 10px;
+}
+
+.metrics-panel {
+  box-shadow: none;
+}
+
+.metrics-panel .section-heading {
+  margin-bottom: 14px;
+}
+
+.metrics-groups {
+  display: grid;
+  gap: 16px;
+}
+
+.metrics-group {
+  min-width: 0;
+}
+
+.metrics-group h3 {
+  margin-bottom: 10px;
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0;
+}
+
+.metric-card {
+  min-width: 0;
+}
+
+.metric-card strong {
+  font-family: var(--mono);
+  font-size: 1rem;
+  line-height: 1.25;
 }
 
 .timeline {
@@ -893,4 +929,3 @@ td strong {
     transition-duration: 0.01ms !important;
   }
 }
-
