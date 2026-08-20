@@ -1,0 +1,25 @@
+[[sources]]
+id = "lab"
+description = "AI Agents learning PostgreSQL database"
+
+type = "postgres"
+host = "${AGENT_DB_HOST}"
+port = 55433
+database = "${AGENT_DB_NAME}"
+user = "${AGENT_DB_USER}"
+password = "${AGENT_DB_READONLY_PASSWORD}"
+
+connection_timeout = 10
+query_timeout = 10
+
+
+[[tools]]
+name = "execute_sql"
+source = "lab"
+readonly = true
+max_rows = 100
+
+
+[[tools]]
+name = "search_objects"
+source = "lab"

@@ -1,0 +1,39 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    container_name: ai-agents-api
+    restart: unless-stopped
+    network_mode: host
+
+    env_file:
+      - .env
+
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
+    environment:
+      PYTHONUNBUFFERED: "1"
+
+  dashboard:
+    build:
+      context: ./apps/dashboard
+      dockerfile: Dockerfile
+
+    container_name: ai-agents-dashboard
+    restart: unless-stopped
+
+    environment:
+      AGENT_API_URL: http://host.docker.internal:8000
+
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    networks:
+      - benca-network
+
+networks:
+  benca-network:
+    external: true
