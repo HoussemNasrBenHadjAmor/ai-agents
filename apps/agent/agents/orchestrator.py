@@ -14,7 +14,6 @@ You have three specialist agents:
 1. docker_agent
 
 Use for:
-
 - Docker containers
 - container logs
 - crash loops
@@ -28,7 +27,6 @@ Use for:
 2. database_agent
 
 Use for:
-
 - PostgreSQL
 - database tables
 - application data
@@ -43,7 +41,6 @@ Use for:
 3. network_agent
 
 Use for:
-
 - DNS resolution
 - HTTP connectivity
 - HTTPS connectivity
@@ -61,8 +58,7 @@ Use specialists instead of guessing.
 If a problem could involve multiple systems, you may use
 multiple specialists.
 
-After receiving specialist results, analyze the evidence
-together and produce one final answer.
+After receiving specialist results, analyze the evidence together.
 
 Never claim a system was inspected unless a specialist
 actually inspected it.
@@ -70,6 +66,55 @@ actually inspected it.
 Everything must remain read-only.
 
 Never ask a specialist to modify infrastructure.
+"""
+
+
+STRUCTURED_FINAL_PROMPT = """
+Using ONLY the specialist evidence already collected, produce the final
+diagnosis as VALID JSON.
+
+Do not use Markdown fences.
+
+Do not include any text before or after the JSON.
+
+Return exactly this general structure:
+
+{
+  "summary": {
+    "status": "healthy | degraded | critical",
+    "total_issues": 0,
+    "critical": 0,
+    "warnings": 0,
+    "healthy": 0,
+    "headline": "Short overall summary"
+  },
+
+  "issues": [
+    {
+      "resource": "resource name",
+      "resource_type": "docker | database | network | other",
+      "status": "current technical status",
+      "severity": "critical | warning | info | healthy",
+      "problem": "short problem title",
+      "evidence": "important concrete evidence",
+      "likely_cause": "likely root cause",
+      "recommendation": "next READ-ONLY investigation or recommendation"
+    }
+  ],
+
+  "narrative": "Short readable explanation of the overall diagnosis."
+}
+
+Rules:
+
+- Never invent evidence.
+- Only report findings supported by specialist results.
+- If something is uncertain, clearly say so.
+- Keep fields concise.
+- Do not recommend automatic infrastructure modifications.
+- Recommendations must remain read-only or require human action.
+- Do not expose private chain-of-thought.
+- Do not return Markdown.
 """
 
 
@@ -94,9 +139,7 @@ ORCHESTRATOR_TOOLS = [
                         ),
                     }
                 },
-                "required": [
-                    "task",
-                ],
+                "required": ["task"],
                 "additionalProperties": False,
             },
         },
@@ -122,9 +165,7 @@ ORCHESTRATOR_TOOLS = [
                         ),
                     }
                 },
-                "required": [
-                    "task",
-                ],
+                "required": ["task"],
                 "additionalProperties": False,
             },
         },
@@ -146,9 +187,7 @@ ORCHESTRATOR_TOOLS = [
                         "description": ("Detailed network investigation task."),
                     }
                 },
-                "required": [
-                    "task",
-                ],
+                "required": ["task"],
                 "additionalProperties": False,
             },
         },
@@ -234,13 +273,106 @@ class Orchestrator:
                 event_callback=event_callback,
             )
 
-        return f"ERROR: Unknown specialist: " f"{tool_name}"
+        return f"ERROR: Unknown specialist: {tool_name}"
+
+    async def build_structured_diagnosis(
+        self,
+        messages: list,
+        event_callback: EventCallback = None,
+    ) -> dict:
+
+        await emit(
+            event_callback,
+            "synthesizing",
+            message="Building structured diagnosis",
+        )
+
+        messages.append(
+            {
+                "role": "user",
+                "content": STRUCTURED_FINAL_PROMPT,
+            }
+        )
+
+        final_response = chat(
+            messages=messages,
+            tools=None,
+        )
+
+        raw_content = final_response.content or "{}"
+
+        try:
+            diagnosis = json.loads(raw_content)
+
+        except json.JSONDecodeError:
+
+            diagnosis = {
+                "summary": {
+                    "status": "degraded",
+                    "total_issues": 0,
+                    "critical": 0,
+                    "warnings": 0,
+                    "healthy": 0,
+                    "headline": ("Structured diagnosis " "could not be parsed"),
+                },
+                "issues": [],
+                "narrative": raw_content,
+            }
+
+        diagnosis.setdefault(
+            "summary",
+            {},
+        )
+
+        diagnosis.setdefault(
+            "issues",
+            [],
+        )
+
+        diagnosis.setdefault(
+            "narrative",
+            "",
+        )
+
+        summary = diagnosis["summary"]
+
+        summary.setdefault(
+            "status",
+            "degraded",
+        )
+
+        summary.setdefault(
+            "total_issues",
+            len(diagnosis["issues"]),
+        )
+
+        summary.setdefault(
+            "critical",
+            0,
+        )
+
+        summary.setdefault(
+            "warnings",
+            0,
+        )
+
+        summary.setdefault(
+            "healthy",
+            0,
+        )
+
+        summary.setdefault(
+            "headline",
+            "Infrastructure diagnosis",
+        )
+
+        return diagnosis
 
     async def run(
         self,
         user_message: str,
         event_callback: EventCallback = None,
-    ) -> str:
+    ) -> dict:
 
         await emit(
             event_callback,
@@ -277,24 +409,27 @@ class Orchestrator:
 
             if not response.tool_calls:
 
+                diagnosis = await self.build_structured_diagnosis(
+                    messages,
+                    event_callback,
+                )
+
                 await emit(
                     event_callback,
                     "investigation_completed",
                     message="Investigation completed",
                 )
 
-                return response.content
+                return diagnosis
 
             for tool_call in response.tool_calls:
 
                 tool_name = tool_call.function.name
 
                 try:
-
                     arguments = json.loads(tool_call.function.arguments or "{}")
 
                 except json.JSONDecodeError:
-
                     arguments = {}
 
                 print(f"[Specialist requested] " f"{tool_name}")
@@ -313,39 +448,9 @@ class Orchestrator:
                     }
                 )
 
-        await emit(
+        diagnosis = await self.build_structured_diagnosis(
+            messages,
             event_callback,
-            "synthesizing",
-            message="Combining specialist findings",
-        )
-
-        messages.append(
-            {
-                "role": "user",
-                "content": """
-You have reached the maximum orchestration rounds.
-
-Do not request additional specialists.
-
-Using all specialist evidence already collected,
-provide the final combined diagnosis now.
-
-Clearly explain:
-
-1. Confirmed problems
-2. Which system is affected
-3. Likely root causes
-4. Remaining uncertainty
-5. Recommended next read-only investigation
-
-Do not modify anything.
-""",
-            }
-        )
-
-        final_response = chat(
-            messages=messages,
-            tools=None,
         )
 
         await emit(
@@ -354,4 +459,4 @@ Do not modify anything.
             message="Investigation completed",
         )
 
-        return final_response.content
+        return diagnosis

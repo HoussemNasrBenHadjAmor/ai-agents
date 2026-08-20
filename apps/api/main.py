@@ -1,12 +1,18 @@
-import sys
-from pathlib import Path
-
 import asyncio
 import json
+import sys
 
-from fastapi.responses import StreamingResponse
+from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import (
+    FastAPI,
+    HTTPException,
+)
+
+from fastapi.responses import (
+    StreamingResponse,
+)
+
 from pydantic import BaseModel
 
 AGENT_PATH = Path(__file__).resolve().parents[1] / "agent"
@@ -22,9 +28,19 @@ from agents.docker_agent import DockerAgent
 from agents.network_agent import NetworkAgent
 from agents.orchestrator import Orchestrator
 
+from history import (
+    complete_investigation,
+    create_investigation,
+    fail_investigation,
+    get_investigation,
+    init_history_database,
+    list_investigations,
+    save_event,
+)
+
 app = FastAPI(
-    title="AI DevOps Agent API",
-    version="0.1.0",
+    title=("AI DevOps Agent API"),
+    version="0.2.0",
 )
 
 
@@ -46,14 +62,24 @@ async def startup():
     global network_agent
     global orchestrator
 
+    print("[API] Initializing history database...")
+
+    await init_history_database()
+
+    print("[API] History database ready.")
+
     print("[API] Starting agents...")
 
     docker_agent = DockerAgent()
+
     database_agent = DatabaseAgent()
+
     network_agent = NetworkAgent()
 
     await docker_agent.connect()
+
     await database_agent.connect()
+
     await network_agent.connect()
 
     orchestrator = Orchestrator(
@@ -71,12 +97,15 @@ async def shutdown():
     print("[API] Closing agents...")
 
     if network_agent:
+
         await network_agent.close()
 
     if database_agent:
+
         await database_agent.close()
 
     if docker_agent:
+
         await docker_agent.close()
 
 
@@ -94,11 +123,15 @@ async def investigate(
     request: InvestigationRequest,
 ):
 
-    result = await orchestrator.run(request.message)
+    diagnosis = await orchestrator.run(request.message)
 
     return {
         "message": request.message,
-        "result": result,
+        "diagnosis": diagnosis,
+        "result": diagnosis.get(
+            "narrative",
+            "",
+        ),
     }
 
 
@@ -107,33 +140,70 @@ async def investigate_stream(
     request: InvestigationRequest,
 ):
 
+    investigation = await create_investigation(request.message)
+
+    investigation_id = investigation.id
+
     queue = asyncio.Queue()
 
-    async def event_callback(event: dict):
+    sequence = 0
+
+    async def event_callback(
+        event: dict,
+    ):
+
+        nonlocal sequence
+
+        sequence += 1
+
+        await save_event(
+            investigation_id,
+            sequence,
+            event,
+        )
+
         await queue.put(event)
 
     async def run_investigation():
 
         try:
 
-            result = await orchestrator.run(
+            diagnosis = await orchestrator.run(
                 request.message,
                 event_callback=event_callback,
+            )
+
+            await complete_investigation(
+                investigation_id,
+                diagnosis,
             )
 
             await queue.put(
                 {
                     "type": "result",
-                    "result": result,
+                    "investigation_id": investigation_id,
+                    "diagnosis": diagnosis,
+                    "result": diagnosis.get(
+                        "narrative",
+                        "",
+                    ),
                 }
             )
 
         except Exception as exc:
 
+            error_message = str(exc)
+
+            await fail_investigation(
+                investigation_id,
+                error_message,
+            )
+
             await queue.put(
                 {
                     "type": "error",
-                    "message": str(exc),
+                    "investigation_id": investigation_id,
+                    "message": error_message,
                 }
             )
 
@@ -142,10 +212,22 @@ async def investigate_stream(
             await queue.put(
                 {
                     "type": "done",
+                    "investigation_id": investigation_id,
                 }
             )
 
     async def event_generator():
+
+        yield (
+            "data: "
+            + json.dumps(
+                {
+                    "type": "investigation_created",
+                    "investigation_id": investigation_id,
+                }
+            )
+            + "\n\n"
+        )
 
         task = asyncio.create_task(run_investigation())
 
@@ -173,3 +255,26 @@ async def investigate_stream(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@app.get("/investigations")
+async def investigations():
+
+    return await list_investigations()
+
+
+@app.get("/investigations/{investigation_id}")
+async def investigation_detail(
+    investigation_id: str,
+):
+
+    investigation = await get_investigation(investigation_id)
+
+    if investigation is None:
+
+        raise HTTPException(
+            status_code=404,
+            detail=("Investigation not found"),
+        )
+
+    return investigation
